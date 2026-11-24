@@ -331,7 +331,7 @@ export const mailRoutes: FastifyPluginAsync = async (fastify) => {
             content,
             sender: senderInfo,
             ctaText: ctaText || (resolvedProjectName ? 'Open Project' : 'Open CoreTrack'),
-            ctaUrl: ctaUrl || (projectId ? `http://localhost:3000/projects/${projectId}` : undefined),
+            ctaUrl: ctaUrl || (projectId ? `${process.env.APP_URL || 'http://localhost:3000'}/projects/${projectId}` : undefined),
             notificationType: category,
             projectId,
             ticketId,

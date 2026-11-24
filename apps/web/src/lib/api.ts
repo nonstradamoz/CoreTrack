@@ -1,4 +1,43 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
+/**
+ * Resolves the base URL for API requests.
+ * - In server-side execution (functions/SSR), prioritizes the Vercel Service binding (process.env.API_URL).
+ * - In client-side execution, uses process.env.NEXT_PUBLIC_API_URL if defined,
+ *   or an empty string in production/Vercel (leveraging top-level rewrites on the same origin),
+ *   or 'http://localhost:4000' during standalone local development.
+ */
+export function getBaseApiUrl(): string {
+  if (typeof window === 'undefined') {
+    if (process.env.API_URL) {
+      return process.env.API_URL.replace(/\/$/, '');
+    }
+    if (process.env.NEXT_PUBLIC_API_URL) {
+      return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '');
+    }
+    return 'http://localhost:4000';
+  }
+
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '');
+  }
+
+  if (typeof window !== 'undefined' && window.location.port === '3000' && window.location.hostname === 'localhost') {
+    return 'http://localhost:4000';
+  }
+
+  return '';
+}
+
+export const API_URL = {
+  toString() {
+    return getBaseApiUrl();
+  },
+  valueOf() {
+    return getBaseApiUrl();
+  },
+  [Symbol.toPrimitive]() {
+    return getBaseApiUrl();
+  },
+} as unknown as string;
 
 export interface Ticket {
   id: string;

@@ -241,7 +241,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
               roleName: callerTierInfo.roleName,
             },
             ctaText: 'Access Workspace',
-            ctaUrl: 'http://localhost:3000',
+            ctaUrl: process.env.APP_URL || 'http://localhost:3000',
             notificationType: 'DIRECT_MAIL',
           });
         } catch (mailErr) {
