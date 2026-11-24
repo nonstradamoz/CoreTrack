@@ -194,7 +194,6 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      const user = await getCurrentUser(request);
       const callerTierInfo = user
         ? await getUserRoleTier(user.id, projectKey)
         : { tier: 5, roleName: 'Super Admin' };
