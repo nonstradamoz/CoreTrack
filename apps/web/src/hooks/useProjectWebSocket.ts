@@ -2,8 +2,29 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { getBaseApiUrl } from '../lib/api';
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:4000';
+function getWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    let url = process.env.NEXT_PUBLIC_WS_URL.trim().replace(/\/$/, '');
+    if (!url.startsWith('ws://') && !url.startsWith('wss://')) {
+      url = `wss://${url}`;
+    }
+    return url;
+  }
+  if (typeof window !== 'undefined') {
+    const apiBase = getBaseApiUrl();
+    if (apiBase.startsWith('https://')) {
+      return apiBase.replace('https://', 'wss://');
+    }
+    if (apiBase.startsWith('http://')) {
+      return apiBase.replace('http://', 'ws://');
+    }
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}`;
+  }
+  return 'ws://localhost:4000';
+}
 
 export function useProjectWebSocket(projectKey: string) {
   const [isConnected, setIsConnected] = useState(false);
@@ -16,7 +37,8 @@ export function useProjectWebSocket(projectKey: string) {
 
     function connect() {
       try {
-        const socket = new WebSocket(`${WS_URL}/ws`);
+        const wsBase = getWsUrl();
+        const socket = new WebSocket(`${wsBase}/ws`);
         socketRef.current = socket;
 
         socket.onopen = () => {

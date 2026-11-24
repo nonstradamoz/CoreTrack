@@ -5,19 +5,29 @@
  *   or an empty string in production/Vercel (leveraging top-level rewrites on the same origin),
  *   or 'http://localhost:4000' during standalone local development.
  */
+function normalizeUrl(rawUrl?: string): string {
+  if (!rawUrl) return '';
+  const trimmed = rawUrl.trim().replace(/\/$/, '');
+  if (!trimmed) return '';
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+}
+
 export function getBaseApiUrl(): string {
   if (typeof window === 'undefined') {
     if (process.env.API_URL) {
-      return process.env.API_URL.replace(/\/$/, '');
+      return normalizeUrl(process.env.API_URL);
     }
     if (process.env.NEXT_PUBLIC_API_URL) {
-      return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '');
+      return normalizeUrl(process.env.NEXT_PUBLIC_API_URL);
     }
     return 'http://localhost:4000';
   }
 
   if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, '');
+    return normalizeUrl(process.env.NEXT_PUBLIC_API_URL);
   }
 
   if (typeof window !== 'undefined' && window.location.port === '3000' && window.location.hostname === 'localhost') {
