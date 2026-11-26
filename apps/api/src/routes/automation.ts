@@ -2,9 +2,14 @@ import { FastifyPluginAsync } from 'fastify';
 import { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { db, automationRules, emailNotificationLogs, projects, eq, and, desc } from '@coretrack/db';
-import { CreateAutomationRuleSchema, UpdateAutomationRuleSchema } from '@coretrack/shared';
-import { runDeadlineAndEscalationScan } from '../services/deadlineScanner.js';
+import { CreateAutomationRuleSchema, UpdateAutomationRuleSchema, Permissions, hasPermission } from '@coretrack/shared';
+import {
+  runDeadlineAndEscalationScan,
+  getSchedulerStatus,
+  updateSchedulerConfig,
+} from '../services/deadlineScanner.js';
 import { getProviderStatus } from '../services/email.js';
+import { getCurrentUser, getUserRoleTier, getEffectiveUserPermissions } from '../auth/auth.js';
 
 export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -174,12 +179,21 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ['Automation'],
         querystring: z.object({
           limit: z.coerce.number().min(1).max(100).default(50),
+          mine: z.enum(['true', 'false']).optional(),
         }),
       },
     },
     async (request, reply) => {
-      const { limit } = request.query;
+      const { limit, mine } = request.query;
+      let recipientFilter: string | undefined;
+      if (mine === 'true') {
+        const caller = await getCurrentUser(request);
+        if (!caller) return reply.send({ data: [], total: 0 });
+        recipientFilter = caller.email;
+      }
+
       const logs = await db.query.emailNotificationLogs.findMany({
+        where: recipientFilter ? eq(emailNotificationLogs.recipientEmail, recipientFilter) : undefined,
         orderBy: desc(emailNotificationLogs.sentAt),
         limit,
       });
@@ -222,6 +236,69 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         success: true,
         data: status,
+      });
+    }
+  );
+
+  // 9. Get Background Deadline Scheduler Status
+  app.get(
+    '/automation/scheduler',
+    {
+      schema: {
+        description: 'Get active state, interval, last run, and next run of the recurring background deadline scanner',
+        tags: ['Automation'],
+      },
+    },
+    async (_request, reply) => {
+      const status = getSchedulerStatus();
+      return reply.send({
+        success: true,
+        data: status,
+      });
+    }
+  );
+
+  // 10. Configure Background Deadline Scheduler (Higher Authorities & Automation Managers)
+  app.post(
+    '/automation/scheduler',
+    {
+      schema: {
+        description: 'Toggle active status or adjust recurring scan interval for the deadline scanner',
+        tags: ['Automation'],
+        body: z.object({
+          isActive: z.boolean().optional(),
+          intervalMinutes: z.number().min(1).max(1440).optional(),
+          runImmediately: z.boolean().optional(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const user = await getCurrentUser(request);
+      if (!user) return reply.status(401).send({ error: 'Unauthorized' });
+
+      const callerTierInfo = await getUserRoleTier(user.id);
+      const { permissions } = await getEffectiveUserPermissions(user.id);
+
+      const canManage =
+        callerTierInfo.tier >= 4 ||
+        hasPermission(permissions, Permissions.AUTOMATION_MANAGE) ||
+        hasPermission(permissions, Permissions.ORG_ADMIN);
+
+      if (!canManage) {
+        return reply.status(403).send({
+          type: 'https://errors.coretrack.internal/forbidden',
+          title: 'Access Denied',
+          status: 403,
+          error: 'FORBIDDEN',
+          message: 'Only higher authorities (Super Admin & Admin) and automation managers can configure the background deadline scheduler.',
+        });
+      }
+
+      const updated = await updateSchedulerConfig(request.body);
+      return reply.send({
+        success: true,
+        message: 'Deadline scheduler configuration updated successfully.',
+        data: updated,
       });
     }
   );

@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { db, users, projects, projectMembers, roles, eq, and } from '@coretrack/db';
+import { db, users, projects, projectMembers, roles, teams, teamMembers, eq, and } from '@coretrack/db';
 import { Permissions, hasPermission, StandardRoleBitmasks } from '@coretrack/shared';
 
 export interface AuthUser {
@@ -11,10 +11,14 @@ export interface AuthUser {
 }
 
 // In-memory active user session for local enterprise development / mock SSO
-let currentMockUserEmail = 'admin@coretrack.internal';
+let currentMockUserEmail: string | null = 'admin@coretrack.internal';
 
-export function setMockUserEmail(email: string) {
+export function setMockUserEmail(email: string | null) {
   currentMockUserEmail = email;
+}
+
+export function clearMockUserSession() {
+  currentMockUserEmail = null;
 }
 
 export function getMockUserEmail() {
@@ -22,9 +26,11 @@ export function getMockUserEmail() {
 }
 
 export async function getCurrentUser(request: FastifyRequest): Promise<AuthUser | null> {
-  // Support custom header 'x-user-email' or fallback to mock user
+  // Support custom header 'x-user-email' or fallback to active session user
   const emailHeader = request.headers['x-user-email'] as string | undefined;
   const targetEmail = emailHeader || currentMockUserEmail;
+
+  if (!targetEmail) return null;
 
   const user = await db.query.users.findFirst({
     where: eq(users.email, targetEmail),
@@ -164,4 +170,18 @@ export function requireProjectPermission(requiredPermission: bigint) {
       });
     }
   };
+}
+
+/**
+ * Returns all team IDs that a user belongs to (as a member or as team lead).
+ */
+export async function getUserTeamIds(userId: string): Promise<string[]> {
+  const [memberRows, leadRows] = await Promise.all([
+    db.select({ teamId: teamMembers.teamId }).from(teamMembers).where(eq(teamMembers.userId, userId)),
+    db.select({ id: teams.id }).from(teams).where(eq(teams.leadId, userId)),
+  ]);
+  const set = new Set<string>();
+  for (const r of memberRows) set.add(r.teamId);
+  for (const r of leadRows) set.add(r.id);
+  return Array.from(set);
 }

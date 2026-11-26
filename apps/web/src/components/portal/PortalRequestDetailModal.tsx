@@ -2,85 +2,90 @@
 
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Ticket, fetchComments, createComment, fetchTicketApprovals, TicketApproval } from '../../lib/api';
-import { SLABadge } from '../sla/SLABadge';
 import {
-  X,
-  MessageSquare,
-  Send,
-  Calendar,
-  ShieldCheck,
-  CheckCircle2,
-  Clock,
-  XCircle,
-} from 'lucide-react';
+  HelpdeskTicket,
+  HelpdeskComment,
+  fetchHelpdeskComments,
+  createHelpdeskComment,
+  updateHelpdeskTicket,
+  fetchAvailableUsers,
+  UserPersona,
+} from '../../lib/api';
+import { SLABadge } from '../sla/SLABadge';
+import { HELPDESK_STATUS_BADGE } from './MyRequestsList';
+import { usePermissions } from '../../hooks/usePermissions';
+import { X, MessageSquare, Send, Calendar, Lock, Globe, AlertCircle } from 'lucide-react';
 
 interface PortalRequestDetailModalProps {
-  ticket: Ticket | null;
+  ticket: HelpdeskTicket | null;
+  isAgent: boolean;
   onClose: () => void;
+  onTicketUpdated: (updated: HelpdeskTicket) => void;
 }
 
-const statusMap: Record<string, { label: string; color: string }> = {
-  TODO: { label: 'Received by IT', color: 'bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800' },
-  PENDING_APPROVAL: { label: 'Pending Management Approval', color: 'bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200 dark:border-amber-800' },
-  IN_PROGRESS: { label: 'Assigned / In Progress', color: 'bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-200 dark:border-blue-800' },
-  IN_REVIEW: { label: 'Awaiting Verification', color: 'bg-purple-50 dark:bg-purple-950/60 text-purple-800 dark:text-purple-300 border-purple-200 dark:border-purple-800' },
-  RESOLVED: { label: 'Resolved', color: 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800' },
-  DONE: { label: 'Completed', color: 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800' },
-  CANCELED: { label: 'Canceled', color: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700' },
-};
-
-export function PortalRequestDetailModal({ ticket, onClose }: PortalRequestDetailModalProps) {
+export function PortalRequestDetailModal({
+  ticket,
+  isAgent,
+  onClose,
+  onTicketUpdated,
+}: PortalRequestDetailModalProps) {
   const queryClient = useQueryClient();
+  const { roleTier } = usePermissions();
   const [replyText, setReplyText] = useState('');
+  const [isInternal, setIsInternal] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const { data: comments = [], isLoading: isLoadingComments } = useQuery({
-    queryKey: ['comments', ticket?.ticketKey],
-    queryFn: () => (ticket ? fetchComments(ticket.ticketKey) : Promise.resolve([])),
+  const { data: comments = [], isLoading: isLoadingComments } = useQuery<HelpdeskComment[]>({
+    queryKey: ['helpdeskComments', ticket?.ticketKey],
+    queryFn: () => (ticket ? fetchHelpdeskComments(ticket.ticketKey) : Promise.resolve([])),
     enabled: !!ticket,
   });
 
-  const { data: approvals = [] } = useQuery<TicketApproval[]>({
-    queryKey: ['ticketApprovals', ticket?.ticketKey],
-    queryFn: () => (ticket ? fetchTicketApprovals(ticket.ticketKey) : Promise.resolve([])),
-    enabled: !!ticket,
+  const { data: users = [] } = useQuery<UserPersona[]>({
+    queryKey: ['availableUsers'],
+    queryFn: fetchAvailableUsers,
+    enabled: isAgent,
   });
 
-  // Strict employee privacy filter: NEVER show INTERNAL_ONLY notes to the requester!
-  const publicComments = comments.filter((c) => c.visibilityScope === 'PUBLIC');
+  const updateMutation = useMutation({
+    mutationFn: (updates: Parameters<typeof updateHelpdeskTicket>[1]) =>
+      updateHelpdeskTicket(ticket!.ticketKey, updates),
+    onSuccess: (updated) => {
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: ['helpdeskTickets'] });
+      onTicketUpdated(updated);
+    },
+    onError: (err: any) => {
+      setActionError(err.message || 'Failed to update ticket');
+    },
+  });
 
   const replyMutation = useMutation({
-    mutationFn: (body: string) =>
-      createComment(ticket!.ticketKey, {
-        body,
-        visibilityScope: 'PUBLIC',
-      }),
+    mutationFn: (payload: { body: string; isInternal: boolean }) =>
+      createHelpdeskComment(ticket!.ticketKey, payload),
     onSuccess: () => {
       setReplyText('');
-      queryClient.invalidateQueries({ queryKey: ['comments', ticket?.ticketKey] });
+      queryClient.invalidateQueries({ queryKey: ['helpdeskComments', ticket?.ticketKey] });
     },
   });
 
   if (!ticket) return null;
 
-  const statusInfo = statusMap[ticket.status] || {
-    label: ticket.status,
-    color: 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700',
-  };
+  const isStatusLocked = (ticket.statusSetByRoleTier ?? 1) > roleTier;
+  const isAssigneeLocked = (ticket.assigneeSetByRoleTier ?? 1) > roleTier;
 
-  async function handleSendReply(e: React.FormEvent) {
-    e.preventDefault();
-    if (!replyText.trim()) return;
-    await replyMutation.mutateAsync(replyText.trim());
-  }
+  const statusInfo = HELPDESK_STATUS_BADGE[ticket.status] || {
+    label: ticket.status,
+    color: 'bg-slate-100 text-slate-700 border-slate-200',
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 dark:bg-black/60 backdrop-blur-xs">
-      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden transition-colors">
+      <div className="relative w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40">
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-xs font-bold text-slate-500 dark:text-slate-400">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span className="font-mono text-xs font-bold text-blue-600 dark:text-blue-400">
               {ticket.ticketKey}
             </span>
             <span className={`px-2.5 py-0.5 rounded-full border text-xs font-semibold ${statusInfo.color}`}>
@@ -90,7 +95,7 @@ export function PortalRequestDetailModal({ ticket, onClose }: PortalRequestDetai
               <SLABadge
                 dueAt={ticket.slaResolutionDueAt}
                 isPaused={ticket.isSlaPaused}
-                isResolved={ticket.status === 'DONE' || ticket.status === 'RESOLVED'}
+                isResolved={ticket.status === 'RESOLVED' || ticket.status === 'CLOSED'}
                 label="Target SLA:"
               />
             )}
@@ -98,144 +103,244 @@ export function PortalRequestDetailModal({ ticket, onClose }: PortalRequestDetai
 
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Modal Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-5">
           <div>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">{ticket.title}</h2>
-            <div className="flex items-center gap-3 text-xs text-slate-500 dark:text-slate-400 mb-4">
+            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100 mb-1.5">{ticket.title}</h2>
+            <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-500 dark:text-slate-400 mb-4">
               <span className="flex items-center gap-1">
                 <Calendar className="h-3.5 w-3.5" />
-                Submitted {new Date(ticket.createdAt).toLocaleDateString()}
+                {new Date(ticket.createdAt).toLocaleString()}
               </span>
               <span>•</span>
-              <span className="capitalize">{ticket.ticketType.replace('_', ' ').toLowerCase()}</span>
-            </div>
-
-            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30 text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-              {ticket.description}
-            </div>
-          </div>
-
-          {/* ITSM Staged Multi-Tier Approval Status */}
-          {(approvals.length > 0 || ticket.status === 'PENDING_APPROVAL') && (
-            <div className="p-4 rounded-xl border border-blue-200 dark:border-blue-900 bg-blue-50/40 dark:bg-blue-950/20 space-y-3">
-              <div className="flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-                <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                  Required Approvals Progress
-                </h3>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {ticket.status === 'PENDING_APPROVAL'
-                  ? 'This request requires formal management sign-off before IT execution begins. The SLA clock is currently paused.'
-                  : 'All approval sign-offs completed.'}
-              </p>
-
-              <div className="space-y-2">
-                {approvals.map((appr) => (
-                  <div
-                    key={appr.id}
-                    className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between text-xs"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-bold text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                        Tier {appr.tier}
-                      </span>
-                      <span className="text-slate-700 dark:text-slate-300">
-                        Department / Manager Review
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
-                      {appr.status === 'APPROVED' ? (
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                          <CheckCircle2 className="h-3 w-3" /> Approved
-                        </span>
-                      ) : appr.status === 'REJECTED' ? (
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
-                          <XCircle className="h-3 w-3" /> Rejected
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
-                          <Clock className="h-3 w-3" /> Pending Review
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Public Updates and Messages */}
-          <div className="pt-4 border-t border-slate-200 dark:border-slate-800">
-            <h3 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
-              <MessageSquare className="h-4 w-4 text-slate-500" />
-              IT Team Updates & Conversation ({publicComments.length})
-            </h3>
-
-            {/* Conversation Stream */}
-            <div className="space-y-3 mb-6">
-              {isLoadingComments ? (
-                <p className="text-xs text-slate-400">Loading conversation...</p>
-              ) : publicComments.length === 0 ? (
-                <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
-                  No messages yet. The IT support team will reply directly to this ticket.
-                </div>
-              ) : (
-                publicComments.map((comment) => (
-                  <div
-                    key={comment.id}
-                    className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs shadow-2xs"
-                  >
-                    <div className="flex items-center justify-between mb-1.5">
-                      <div className="flex items-center gap-2">
-                        <div className="h-5 w-5 rounded-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 flex items-center justify-center text-[10px] font-bold">
-                          {(comment.authorName || 'S').charAt(0).toUpperCase()}
-                        </div>
-                        <span className="font-semibold text-slate-900 dark:text-slate-100">
-                          {comment.authorName || 'IT Support Team'}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-slate-400">
-                        {new Date(comment.createdAt).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
-                    </div>
-                    <p className="text-slate-800 dark:text-slate-200 whitespace-pre-wrap pl-7">{comment.body}</p>
-                  </div>
-                ))
+              <span>{ticket.category}</span>
+              <span>•</span>
+              <span>{ticket.department}</span>
+              {ticket.requester && (
+                <>
+                  <span>•</span>
+                  <span>Requester: <strong className="text-slate-700 dark:text-slate-200">{ticket.requester.fullName}</strong></span>
+                </>
               )}
             </div>
 
-            {/* Requester Reply Form */}
-            <form onSubmit={handleSendReply} className="relative">
-              <textarea
-                rows={3}
-                placeholder="Reply to the IT team or provide additional details..."
-                value={replyText}
-                onChange={(e) => setReplyText(e.target.value)}
-                className="w-full p-3 pr-24 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 transition"
-              />
-              <button
-                type="submit"
-                disabled={!replyText.trim() || replyMutation.isPending}
-                className="absolute right-2.5 bottom-3.5 px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs disabled:opacity-40 transition"
-              >
-                <Send className="h-3 w-3" />
-                <span>Send</span>
-              </button>
-            </form>
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30 text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
+              {ticket.description || 'No additional details provided.'}
+            </div>
+          </div>
+
+          {/* Error banner */}
+          {actionError && (
+            <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300 flex items-center gap-2">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{actionError}</span>
+            </div>
+          )}
+
+          {/* Agent Triage Controls */}
+          {isAgent ? (
+            <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/30 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div>
+                <label className="flex items-center justify-between text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  <span>Status</span>
+                  {isStatusLocked && (
+                    <span className="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400 normal-case font-medium">
+                      <Lock className="h-2.5 w-2.5" /> Locked
+                    </span>
+                  )}
+                </label>
+                <select
+                  value={ticket.status}
+                  disabled={isStatusLocked || updateMutation.isPending}
+                  onChange={(e) => updateMutation.mutate({ status: e.target.value as HelpdeskTicket['status'] })}
+                  title={isStatusLocked ? 'Locked: Set by a higher authority' : undefined}
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-medium text-slate-800 dark:text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <option value="OPEN">Open</option>
+                  <option value="IN_PROGRESS">In Progress</option>
+                  <option value="WAITING_ON_USER">Waiting on User</option>
+                  <option value="RESOLVED">Resolved</option>
+                  <option value="CLOSED">Closed</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-semibold uppercase text-slate-400 mb-1">Priority</label>
+                <select
+                  value={ticket.priority}
+                  disabled={updateMutation.isPending}
+                  onChange={(e) => updateMutation.mutate({ priority: e.target.value as HelpdeskTicket['priority'] })}
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-medium text-slate-800 dark:text-slate-200"
+                >
+                  <option value="LOW">Low</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="HIGH">High</option>
+                  <option value="URGENT">Urgent</option>
+                </select>
+              </div>
+              <div>
+                <label className="flex items-center justify-between text-[10px] font-semibold uppercase text-slate-400 mb-1">
+                  <span>Assigned Agent</span>
+                  {isAssigneeLocked && (
+                    <span className="inline-flex items-center gap-0.5 text-amber-600 dark:text-amber-400 normal-case font-medium">
+                      <Lock className="h-2.5 w-2.5" /> Locked
+                    </span>
+                  )}
+                </label>
+                <select
+                  value={ticket.assigneeId || ''}
+                  disabled={isAssigneeLocked || updateMutation.isPending}
+                  onChange={(e) => updateMutation.mutate({ assigneeId: e.target.value || null })}
+                  title={isAssigneeLocked ? 'Locked: Assigned by a higher authority' : undefined}
+                  className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-medium text-slate-800 dark:text-slate-200 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  <option value="">Unassigned</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.fullName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center justify-end">
+              {isStatusLocked ? (
+                <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-xs font-medium border border-slate-200 dark:border-slate-700">
+                  <Lock className="h-3.5 w-3.5" />
+                  <span>Status locked by higher authority</span>
+                </span>
+              ) : ticket.status !== 'CLOSED' ? (
+                <button
+                  type="button"
+                  onClick={() => updateMutation.mutate({ status: 'CLOSED' })}
+                  className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Close Request
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => updateMutation.mutate({ status: 'OPEN' })}
+                  className="px-3 py-1.5 rounded-lg border border-blue-200 dark:border-blue-800 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer"
+                >
+                  Reopen Request
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Conversation */}
+          <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <MessageSquare className="h-3.5 w-3.5" />
+              Conversation ({comments.length})
+            </h3>
+
+            {isLoadingComments ? (
+              <p className="text-xs text-slate-400 italic">Loading messages...</p>
+            ) : comments.length === 0 ? (
+              <div className="p-4 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-center text-xs text-slate-400">
+                No replies yet. Add a message below to communicate with IT support.
+              </div>
+            ) : (
+              <div className="space-y-2.5">
+                {comments.map((c) => (
+                  <div
+                    key={c.id}
+                    className={`p-3 rounded-xl border text-xs ${
+                      c.isInternal
+                        ? 'border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20'
+                        : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-slate-900 dark:text-slate-100">
+                          {c.author?.fullName || 'User'}
+                        </span>
+                        {c.isInternal && (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300">
+                            <Lock className="h-2.5 w-2.5" />
+                            Internal Note
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {new Date(c.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
+                      {c.body}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Reply Composer */}
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!replyText.trim()) return;
+            replyMutation.mutate({ body: replyText.trim(), isInternal });
+          }}
+          className="p-4 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2"
+        >
+          {isAgent && (
+            <div className="flex items-center gap-2 text-[11px]">
+              <button
+                type="button"
+                onClick={() => setIsInternal(false)}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
+                  !isInternal
+                    ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                    : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Globe className="h-3 w-3" />
+                Public Reply
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsInternal(true)}
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-semibold transition cursor-pointer ${
+                  isInternal
+                    ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800'
+                    : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <Lock className="h-3 w-3" />
+                Internal Note
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              placeholder={isInternal ? 'Write an internal note (hidden from requester)...' : 'Write a reply...'}
+              value={replyText}
+              onChange={(e) => setReplyText(e.target.value)}
+              className="flex-1 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
+            />
+            <button
+              type="submit"
+              disabled={replyMutation.isPending || !replyText.trim()}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold disabled:opacity-40 cursor-pointer"
+            >
+              <Send className="h-3.5 w-3.5" />
+              <span>Send</span>
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

@@ -1,401 +1,290 @@
-import { db, users, departments, teams, teamMembers, projects, tickets, roles, projectMembers, projectMilestones, projectActivityLogs } from './index.js';
-import { sql, eq } from 'drizzle-orm';
-import { StandardRoleBitmasks } from '@coretrack/shared';
+import {
+  db,
+  users,
+  departments,
+  teams,
+  teamMembers,
+  projects,
+  tickets,
+  roles,
+  projectMembers,
+  projectMilestones,
+  projectActivityLogs,
+} from './index.js';
+import { eq } from 'drizzle-orm';
+import { getSeedConfig, UserKey, SeedConfig } from './seedConfig.js';
 
-export async function seed(exitOnComplete = false) {
+export async function seed(exitOnComplete = false, customConfig?: SeedConfig) {
+  const config = customConfig || getSeedConfig();
   console.log('🌱 Seeding CoreTrack initial data...');
 
-  // 1. Create Default Users — mapped to new 6-tier role hierarchy
-  const [adminUser] = await db
-    .insert(users)
-    .values({
-      email: 'admin@coretrack.internal',
-      fullName: 'System Administrator',
-      userType: 'INTERNAL_EMPLOYEE',
-      status: 'ACTIVE',
-      globalPermissions: StandardRoleBitmasks.SUPER_ADMIN, // ORG_ADMIN bitmask (full bypass)
-    })
-    .onConflictDoNothing()
-    .returning();
-
-  const [devUser] = await db
-    .insert(users)
-    .values({
-      email: 'engineer@coretrack.internal',
-      fullName: 'Devin Vance',
-      userType: 'INTERNAL_EMPLOYEE',
-      status: 'ACTIVE',
-      globalPermissions: StandardRoleBitmasks.TEAM_LEAD,
-    })
-    .onConflictDoNothing()
-    .returning();
-
-  const [employeeUser] = await db
-    .insert(users)
-    .values({
-      email: 'employee@coretrack.internal',
-      fullName: 'Alex Chen',
-      userType: 'INTERNAL_EMPLOYEE',
-      status: 'ACTIVE',
-      globalPermissions: StandardRoleBitmasks.EMPLOYEE,
-    })
-    .onConflictDoNothing()
-    .returning();
-
-  // Fetch users if they already existed and ensure their global permissions match the 6-tier hierarchy
-  const actualAdmin = adminUser || (await db.query.users.findFirst({ where: (u, { eq }) => eq(u.email, 'admin@coretrack.internal') }));
-  const actualDev = devUser || (await db.query.users.findFirst({ where: (u, { eq }) => eq(u.email, 'engineer@coretrack.internal') }));
-  const actualEmployee = employeeUser || (await db.query.users.findFirst({ where: (u, { eq }) => eq(u.email, 'employee@coretrack.internal') }));
-
-  if (actualAdmin) {
-    await db.update(users).set({ globalPermissions: StandardRoleBitmasks.SUPER_ADMIN }).where(eq(users.id, actualAdmin.id));
-  }
-  if (actualDev) {
-    await db.update(users).set({ globalPermissions: StandardRoleBitmasks.TEAM_LEAD }).where(eq(users.id, actualDev.id));
-  }
-  if (actualEmployee) {
-    await db.update(users).set({ globalPermissions: StandardRoleBitmasks.EMPLOYEE }).where(eq(users.id, actualEmployee.id));
-  }
-
-  // 2. Seed Baseline Dynamic Roles (6-tier RBAC hierarchy)
-  const baselineRoles = [
-    {
-      name: 'Super Admin',
-      description: 'Full platform bypass. Access to every module including Roles & Settings.',
-      color: '#0F172A',
-      isSystem: true,
-      permissions: StandardRoleBitmasks.SUPER_ADMIN,
-    },
-    {
-      name: 'Admin',
-      description: 'Full access to all modules except Roles & Settings configuration.',
-      color: '#1D4ED8',
-      isSystem: true,
-      permissions: StandardRoleBitmasks.ADMIN,
-    },
-    {
-      name: 'Manager',
-      description: 'Projects, boards, reports, and automation. No system settings.',
-      color: '#4F46E5',
-      isSystem: true,
-      permissions: StandardRoleBitmasks.MANAGER,
-    },
-    {
-      name: 'Team Lead',
-      description: 'Boards, tasks, sprints. View-only access to projects and reports.',
-      color: '#0EA5E9',
-      isSystem: true,
-      permissions: StandardRoleBitmasks.TEAM_LEAD,
-    },
-    {
-      name: 'Employee',
-      description: 'Dashboard, board (own tasks), and service desk portal only.',
-      color: '#10B981',
-      isSystem: true,
-      permissions: StandardRoleBitmasks.EMPLOYEE,
-    },
-    {
-      name: 'Custom Role',
-      description: 'Configurable via module toggle grid in Roles & Settings. Assigned by Super Admin.',
-      color: '#F59E0B',
-      isSystem: false,
-      permissions: StandardRoleBitmasks.CUSTOM,
-    },
-  ];
-
-  for (const roleDef of baselineRoles) {
-    await db
-      .insert(roles)
-      .values(roleDef)
-      .onConflictDoNothing();
-  }
-
-  const seededRoles = await db.query.roles.findMany();
-  const superAdminRole = seededRoles.find((r) => r.name === 'Super Admin') || seededRoles[0];
-  const teamLeadRole   = seededRoles.find((r) => r.name === 'Team Lead')   || seededRoles[0];
-  const employeeRole   = seededRoles.find((r) => r.name === 'Employee')    || seededRoles[0];
-  // Legacy aliases used below for project membership
-  const adminRole      = superAdminRole;
-  const devRole        = teamLeadRole;
-  const requesterRole  = employeeRole;
-
-  // 2. Create Engineering Department & Project (CORE)
-  const [engDept] = await db
-    .insert(departments)
-    .values({
-      name: 'Engineering',
-      code: 'ENG',
-    })
-    .onConflictDoNothing()
-    .returning();
-
-  const actualEngDept = engDept || (await db.query.departments.findFirst({ where: (d, { eq }) => eq(d.code, 'ENG') }));
-  if (actualEngDept) {
-    const [engTeam] = await db
-      .insert(teams)
-      .values({
-        departmentId: actualEngDept.id,
-        name: 'Platform Engineering',
-        keyPrefix: 'PLAT',
-      })
-      .onConflictDoNothing()
-      .returning();
-
-    const actualEngTeam = engTeam || (await db.query.teams.findFirst({ where: (t, { eq }) => eq(t.keyPrefix, 'PLAT') }));
-    if (actualEngTeam) {
-      const [engProject] = await db
-        .insert(projects)
-        .values({
-          departmentId: actualEngDept.id,
-          primaryTeamId: actualEngTeam.id,
-          key: 'CORE',
-          name: 'Core Application Platform',
-          description: 'High-performance ticketing and task management backbone',
-          projectType: 'ENGINEERING',
-          privacyTier: 'PUBLIC',
-          nextTicketNumber: 2,
-        })
-        .onConflictDoNothing()
-        .returning();
-
-      const actualEngProject = engProject || (await db.query.projects.findFirst({ where: (p, { eq }) => eq(p.key, 'CORE') }));
-      if (actualEngProject && actualAdmin) {
-        await db
-          .insert(tickets)
-          .values({
-            projectId: actualEngProject.id,
-            ticketKey: 'CORE-1',
-            ticketNumber: 1,
-            ticketType: 'TASK',
-            title: 'Verify local development infrastructure & health endpoints',
-            description: 'Docker Compose containers (PostgreSQL, Redis, Meilisearch, MinIO) operational.',
-            status: 'IN_PROGRESS',
-            priority: 'HIGH',
-            storyPoints: 3,
-            reporterId: actualAdmin.id,
-            assigneeId: actualDev ? actualDev.id : actualAdmin.id,
-            assignedByUserId: actualAdmin.id,
-            assignedByRoleTier: 5,
-            dueDateSetByUserId: actualAdmin.id,
-            dueDateSetByRoleTier: 5,
-          })
-          .onConflictDoNothing();
-        await db.update(projects).set({ nextTicketNumber: 2 }).where(eq(projects.id, actualEngProject.id));
-      }
-    }
-  }
-
-  // 3. Create IT Department & Service Desk Project (HD)
-  const [itDept] = await db
-    .insert(departments)
-    .values({
-      name: 'Information Technology',
-      code: 'IT',
-    })
-    .onConflictDoNothing()
-    .returning();
-
-  const actualItDept = itDept || (await db.query.departments.findFirst({ where: (d, { eq }) => eq(d.code, 'IT') }));
-  if (actualItDept) {
-    const [itTeam] = await db
-      .insert(teams)
-      .values({
-        departmentId: actualItDept.id,
-        name: 'Enterprise Support',
-        keyPrefix: 'ITSD',
-      })
-      .onConflictDoNothing()
-      .returning();
-
-    const actualItTeam = itTeam || (await db.query.teams.findFirst({ where: (t, { eq }) => eq(t.keyPrefix, 'ITSD') }));
-    if (actualItTeam) {
-      const [hdProject] = await db
-        .insert(projects)
-        .values({
-          departmentId: actualItDept.id,
-          primaryTeamId: actualItTeam.id,
-          key: 'HD',
-          name: 'IT Helpdesk & Service Desk',
-          description: 'Employee service requests, hardware provisioning, and access management',
-          projectType: 'SERVICE_DESK',
-          privacyTier: 'PUBLIC',
-          nextTicketNumber: 2,
-        })
-        .onConflictDoNothing()
-        .returning();
-
-      const actualHdProject = hdProject || (await db.query.projects.findFirst({ where: (p, { eq }) => eq(p.key, 'HD') }));
-      if (actualHdProject && actualAdmin) {
-        await db
-          .insert(tickets)
-          .values({
-            projectId: actualHdProject.id,
-            ticketKey: 'HD-1',
-            ticketNumber: 1,
-            ticketType: 'SERVICE_REQUEST',
-            title: 'Hardware Upgrade: 32GB RAM Developer Laptop',
-            description: 'Requesting upgrade for local Docker containers and LLM inference development.',
-            status: 'PENDING_APPROVAL',
-            priority: 'MEDIUM',
-            reporterId: actualEmployee ? actualEmployee.id : actualAdmin.id,
-            assigneeId: actualAdmin.id,
-          })
-          .onConflictDoNothing();
-        await db.update(projects).set({ nextTicketNumber: 2 }).where(eq(projects.id, actualHdProject.id));
-      }
-    }
-  }
-
-  // 4. Assign Project Memberships, Teams, Milestones, and Personnel
-  const coreProj = await db.query.projects.findFirst({ where: (p, { eq }) => eq(p.key, 'CORE') });
-  const hdProj = await db.query.projects.findFirst({ where: (p, { eq }) => eq(p.key, 'HD') });
-  const engTeamObj = await db.query.teams.findFirst({ where: (t, { eq }) => eq(t.keyPrefix, 'PLAT') });
-  const itTeamObj = await db.query.teams.findFirst({ where: (t, { eq }) => eq(t.keyPrefix, 'ITSD') });
-
   const now = new Date();
-  const pastDate = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
-  const futureDeadline = new Date(now.getTime() + 45 * 24 * 60 * 60 * 1000);
-  const pastDeadline = new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000);
 
-  // Update teams with leads & description
-  if (engTeamObj && actualDev) {
-    await db.update(teams).set({
-      leadId: actualDev.id,
-      description: 'Core infrastructure, platform services, reliability, and backend architecture.',
-      updatedAt: now,
-    }).where(eq(teams.id, engTeamObj.id));
+  // 1. Seed or Synchronize Users dynamically from config
+  const userMap = new Map<UserKey, typeof users.$inferSelect>();
 
-    // Seed team members
-    await db.delete(teamMembers).where(eq(teamMembers.teamId, engTeamObj.id));
-    await db.insert(teamMembers).values([
-      { teamId: engTeamObj.id, userId: actualDev.id, role: 'LEAD' },
-      { teamId: engTeamObj.id, userId: actualEmployee.id, role: 'MEMBER' },
-      { teamId: engTeamObj.id, userId: actualAdmin.id, role: 'MEMBER' },
-    ]);
+  for (const userDef of config.users) {
+    const [inserted] = await db
+      .insert(users)
+      .values({
+        email: userDef.email,
+        fullName: userDef.fullName,
+        userType: userDef.userType,
+        status: userDef.status,
+        globalPermissions: userDef.globalPermissions,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    const actualUser =
+      inserted ||
+      (await db.query.users.findFirst({
+        where: (u, { eq: eqU }) => eqU(u.email, userDef.email),
+      }));
+
+    if (actualUser) {
+      if (
+        actualUser.globalPermissions !== userDef.globalPermissions ||
+        actualUser.fullName !== userDef.fullName ||
+        actualUser.status !== userDef.status
+      ) {
+        await db
+          .update(users)
+          .set({
+            globalPermissions: userDef.globalPermissions,
+            fullName: userDef.fullName,
+            status: userDef.status,
+            updatedAt: now,
+          })
+          .where(eq(users.id, actualUser.id));
+      }
+      userMap.set(userDef.key, actualUser);
+    }
   }
 
-  if (itTeamObj && actualAdmin) {
-    await db.update(teams).set({
-      leadId: actualAdmin.id,
-      description: 'Enterprise IT operations, identity lifecycle, and technical support desk.',
-      updatedAt: now,
-    }).where(eq(teams.id, itTeamObj.id));
+  const adminUser = userMap.get('admin');
+  const devUser = userMap.get('dev');
+  const employeeUser = userMap.get('employee');
 
-    await db.delete(teamMembers).where(eq(teamMembers.teamId, itTeamObj.id));
-    await db.insert(teamMembers).values([
-      { teamId: itTeamObj.id, userId: actualAdmin.id, role: 'LEAD' },
-      { teamId: itTeamObj.id, userId: actualEmployee.id, role: 'MEMBER' },
-    ]);
+  if (!adminUser) {
+    throw new Error('Default admin user could not be seeded or retrieved.');
   }
 
-  // Update projects with PM, Reviewer, Status, Dates
-  if (coreProj && actualAdmin && actualDev) {
-    await db.update(projects).set({
-      status: 'IN_PROGRESS',
-      startDate: pastDate,
-      deadline: futureDeadline,
-      projectManagerId: actualAdmin.id,
-      reviewerId: actualDev.id,
-      description: 'Enterprise ticketing and distributed task coordination platform backbone.',
-      updatedAt: now,
-    }).where(eq(projects.id, coreProj.id));
-
-    // Milestones for CORE
-    await db.delete(projectMilestones).where(eq(projectMilestones.projectId, coreProj.id));
-    await db.insert(projectMilestones).values([
-      {
-        projectId: coreProj.id,
-        title: 'Architecture Baseline & Schema Sharding',
-        description: 'PostgreSQL relational core schemas, connection pooling, and baseline indices.',
-        status: 'COMPLETED',
-        dueDate: new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000),
-      },
-      {
-        projectId: coreProj.id,
-        title: 'Project & Team Management RBAC Engine',
-        description: 'Hierarchical role bindings, personnel assignment, and project workflow controls.',
-        status: 'IN_PROGRESS',
-        dueDate: new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000),
-      },
-      {
-        projectId: coreProj.id,
-        title: 'SLA Engine & Production Rollout',
-        description: 'High-throughput SLA breach monitor and webhook notification dispatchers.',
-        status: 'PENDING',
-        dueDate: futureDeadline,
-      },
-    ]);
-
-    // Audit logs for CORE
-    await db.delete(projectActivityLogs).where(eq(projectActivityLogs.projectId, coreProj.id));
-    await db.insert(projectActivityLogs).values([
-      {
-        projectId: coreProj.id,
-        userId: actualAdmin.id,
-        action: 'PROJECT_INITIALIZED',
-        details: 'Project Core Application Platform initialized by System Administrator.',
-      },
-      {
-        projectId: coreProj.id,
-        userId: actualAdmin.id,
-        action: 'REVIEWER_ASSIGNED',
-        details: 'Assigned Devin Vance as primary Technical Reviewer.',
-      },
-      {
-        projectId: coreProj.id,
-        userId: actualDev.id,
-        action: 'MILESTONE_COMPLETED',
-        details: 'Milestone "Architecture Baseline & Schema Sharding" marked completed.',
-      },
-    ]);
+  // 2. Seed Baseline Dynamic Roles
+  for (const roleDef of config.roles) {
+    await db.insert(roles).values(roleDef).onConflictDoNothing();
   }
 
-  if (hdProj && actualAdmin && actualEmployee) {
-    await db.update(projects).set({
-      status: 'IN_PROGRESS',
-      startDate: pastDate,
-      deadline: futureDeadline,
-      projectManagerId: actualAdmin.id,
-      reviewerId: actualAdmin.id,
-      description: 'Employee hardware provisioning, technical inquiries, and access management.',
-      updatedAt: now,
-    }).where(eq(projects.id, hdProj.id));
-
-    await db.delete(projectMilestones).where(eq(projectMilestones.projectId, hdProj.id));
-    await db.insert(projectMilestones).values([
-      {
-        projectId: hdProj.id,
-        title: 'IT Helpdesk Portal Launch',
-        description: 'Self-service ticketing portal for internal staff.',
-        status: 'COMPLETED',
-        dueDate: pastDate,
-      },
-      {
-        projectId: hdProj.id,
-        title: 'Hardware Procurement Automation',
-        description: 'Direct procurement workflow integration for laptop allocation.',
-        status: 'IN_PROGRESS',
-        dueDate: new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000),
-      },
-    ]);
+  const allRoles = await db.query.roles.findMany();
+  const roleMap = new Map<string, typeof roles.$inferSelect>();
+  for (const r of allRoles) {
+    roleMap.set(r.name, r);
   }
 
-  // 5. Assign Project Memberships
-  if (coreProj && adminRole && devRole && requesterRole && actualAdmin && actualDev && actualEmployee) {
-    await db.delete(projectMembers).where(eq(projectMembers.projectId, coreProj.id));
-    await db.insert(projectMembers).values([
-      { projectId: coreProj.id, userId: actualAdmin.id, roleId: adminRole.id },
-      { projectId: coreProj.id, userId: actualDev.id, roleId: devRole.id },
-      { projectId: coreProj.id, userId: actualEmployee.id, roleId: requesterRole.id },
-    ]);
-  }
+  // 3. Seed Departments, Teams, Projects, Tickets, Milestones & Personnel
+  const teamPrefixMap = new Map<string, typeof teams.$inferSelect>();
 
-  if (hdProj && adminRole && requesterRole && actualAdmin && actualEmployee) {
-    await db.delete(projectMembers).where(eq(projectMembers.projectId, hdProj.id));
-    await db.insert(projectMembers).values([
-      { projectId: hdProj.id, userId: actualAdmin.id, roleId: adminRole.id },
-      { projectId: hdProj.id, userId: actualEmployee.id, roleId: requesterRole.id },
-    ]);
+  for (const deptDef of config.departments) {
+    // 3a. Department
+    const [insertedDept] = await db
+      .insert(departments)
+      .values({
+        name: deptDef.name,
+        code: deptDef.code,
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    const actualDept =
+      insertedDept ||
+      (await db.query.departments.findFirst({
+        where: (d, { eq: eqD }) => eqD(d.code, deptDef.code),
+      }));
+
+    if (!actualDept) continue;
+
+    // 3b. Teams within Department
+    for (const teamDef of deptDef.teams) {
+      const leadUser = userMap.get(teamDef.leadUserKey) || adminUser;
+
+      const [insertedTeam] = await db
+        .insert(teams)
+        .values({
+          departmentId: actualDept.id,
+          name: teamDef.name,
+          keyPrefix: teamDef.keyPrefix,
+          description: teamDef.description,
+          leadId: leadUser.id,
+        })
+        .onConflictDoNothing()
+        .returning();
+
+      const actualTeam =
+        insertedTeam ||
+        (await db.query.teams.findFirst({
+          where: (t, { eq: eqT }) => eqT(t.keyPrefix, teamDef.keyPrefix),
+        }));
+
+      if (!actualTeam) continue;
+
+      teamPrefixMap.set(teamDef.keyPrefix, actualTeam);
+
+      await db
+        .update(teams)
+        .set({
+          leadId: leadUser.id,
+          description: teamDef.description,
+          updatedAt: now,
+        })
+        .where(eq(teams.id, actualTeam.id));
+
+      // Team Memberships
+      await db.delete(teamMembers).where(eq(teamMembers.teamId, actualTeam.id));
+      const teamMemberRecords = teamDef.members
+        .map((m) => {
+          const u = userMap.get(m.userKey);
+          return u ? { teamId: actualTeam.id, userId: u.id, role: m.role } : null;
+        })
+        .filter(Boolean) as { teamId: string; userId: string; role: 'LEAD' | 'MEMBER' }[];
+
+      if (teamMemberRecords.length > 0) {
+        await db.insert(teamMembers).values(teamMemberRecords);
+      }
+    }
+
+    // 3c. Projects within Department
+    for (const projDef of deptDef.projects) {
+      const primaryTeam = teamPrefixMap.get(projDef.primaryTeamPrefix);
+      const pmUser = userMap.get(projDef.projectManagerUserKey) || adminUser;
+      const revUser = userMap.get(projDef.reviewerUserKey) || adminUser;
+
+      const startDate = new Date(now.getTime() + projDef.startOffsetDays * 86400000);
+      const deadline = new Date(now.getTime() + projDef.deadlineOffsetDays * 86400000);
+
+      const [insertedProj] = await db
+        .insert(projects)
+        .values({
+          departmentId: actualDept.id,
+          primaryTeamId: primaryTeam ? primaryTeam.id : null,
+          key: projDef.key,
+          name: projDef.name,
+          description: projDef.description,
+          projectType: projDef.projectType,
+          privacyTier: projDef.privacyTier,
+          status: projDef.status,
+          startDate,
+          deadline,
+          projectManagerId: pmUser.id,
+          reviewerId: revUser.id,
+          nextTicketNumber: projDef.tickets.length + 1,
+        })
+        .onConflictDoNothing()
+        .returning();
+
+      const actualProj =
+        insertedProj ||
+        (await db.query.projects.findFirst({
+          where: (p, { eq: eqP }) => eqP(p.key, projDef.key),
+        }));
+
+      if (!actualProj) continue;
+
+      // Ensure updated dates and metadata
+      await db
+        .update(projects)
+        .set({
+          name: projDef.name,
+          description: projDef.description,
+          status: projDef.status,
+          startDate,
+          deadline,
+          projectManagerId: pmUser.id,
+          reviewerId: revUser.id,
+          primaryTeamId: primaryTeam ? primaryTeam.id : actualProj.primaryTeamId,
+          nextTicketNumber: Math.max(actualProj.nextTicketNumber, projDef.tickets.length + 1),
+          updatedAt: now,
+        })
+        .where(eq(projects.id, actualProj.id));
+
+      // Tickets for project
+      for (const tDef of projDef.tickets) {
+        const reporter = userMap.get(tDef.reporterUserKey) || adminUser;
+        const assignee = tDef.assigneeUserKey ? userMap.get(tDef.assigneeUserKey) : null;
+
+        await db
+          .insert(tickets)
+          .values({
+            projectId: actualProj.id,
+            ticketKey: tDef.ticketKey,
+            ticketNumber: tDef.ticketNumber,
+            ticketType: tDef.ticketType,
+            title: tDef.title,
+            description: tDef.description,
+            status: tDef.status,
+            priority: tDef.priority,
+            storyPoints: tDef.storyPoints,
+            reporterId: reporter.id,
+            assigneeId: assignee ? assignee.id : null,
+            assignedByUserId: assignee ? adminUser.id : null,
+            assignedByRoleTier: assignee ? 5 : 1,
+            dueDateSetByUserId: assignee ? adminUser.id : null,
+            dueDateSetByRoleTier: assignee ? 5 : 1,
+          })
+          .onConflictDoNothing();
+      }
+
+      // Milestones for project
+      if (projDef.milestones.length > 0) {
+        await db.delete(projectMilestones).where(eq(projectMilestones.projectId, actualProj.id));
+        await db.insert(projectMilestones).values(
+          projDef.milestones.map((m) => ({
+            projectId: actualProj.id,
+            title: m.title,
+            description: m.description,
+            status: m.status,
+            dueDate: new Date(now.getTime() + m.dueOffsetDays * 86400000),
+          }))
+        );
+      }
+
+      // Activity logs for project
+      if (projDef.activityLogs.length > 0) {
+        await db.delete(projectActivityLogs).where(eq(projectActivityLogs.projectId, actualProj.id));
+        await db.insert(projectActivityLogs).values(
+          projDef.activityLogs.map((log) => {
+            const actor = userMap.get(log.actorUserKey) || adminUser;
+            return {
+              projectId: actualProj.id,
+              userId: actor.id,
+              action: log.action,
+              details: log.detailTemplate({
+                actorName: actor.fullName,
+                adminName: adminUser.fullName,
+                devName: devUser?.fullName || 'Devin Vance',
+                employeeName: employeeUser?.fullName || 'Alex Chen',
+                projectName: projDef.name,
+              }),
+            };
+          })
+        );
+      }
+
+      // Project Memberships
+      if (projDef.members.length > 0) {
+        await db.delete(projectMembers).where(eq(projectMembers.projectId, actualProj.id));
+        const memberValues = projDef.members
+          .map((m) => {
+            const u = userMap.get(m.userKey);
+            const r = roleMap.get(m.roleName);
+            return u && r ? { projectId: actualProj.id, userId: u.id, roleId: r.id } : null;
+          })
+          .filter(Boolean) as { projectId: string; userId: string; roleId: string }[];
+
+        if (memberValues.length > 0) {
+          await db.insert(projectMembers).values(memberValues);
+        }
+      }
+    }
   }
 
   console.log('✅ Database seeded successfully with Engineering & Service Desk projects and dynamic RBAC roles!');

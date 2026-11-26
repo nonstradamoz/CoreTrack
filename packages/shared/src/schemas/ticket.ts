@@ -39,6 +39,7 @@ export const CommentVisibilityEnum = z.enum([
 // Validation Schema for Creating a Ticket
 export const CreateTicketSchema = z.object({
   projectId: z.string().uuid(),
+  teamId: z.string().uuid().optional().nullable(),
   ticketType: TicketTypeEnum,
   title: z.string().min(1, 'Title is required').max(255),
   description: z.string().optional().default(''),
@@ -62,6 +63,7 @@ export const UpdateTicketSchema = z.object({
   status: TicketStatusEnum.optional(),
   priority: TicketPriorityEnum.optional(),
   assigneeId: z.string().uuid().nullable().optional(),
+  teamId: z.string().uuid().nullable().optional(),
   sprintId: z.string().uuid().nullable().optional(),
   storyPoints: z.number().int().min(0).max(100).nullable().optional(),
   spentHours: z.number().min(0).optional(),
@@ -93,6 +95,7 @@ export const BulkUpdateTicketsSchema = z.object({
   status: TicketStatusEnum.optional(),
   priority: TicketPriorityEnum.optional(),
   assigneeId: z.string().uuid().nullable().optional(),
+  teamId: z.string().uuid().nullable().optional(),
   sprintId: z.string().uuid().nullable().optional(),
 });
 

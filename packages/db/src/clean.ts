@@ -15,11 +15,14 @@ import {
   teamMembers,
   projects,
   teams,
+  departments,
   automationRules,
   emailNotificationLogs,
   roles,
+  users,
   eq,
 } from './index.js';
+import { getSeedConfig } from './seedConfig.js';
 
 export async function clearSampleData() {
   console.log('🧹 Purging all sample and test data from CoreTrack database...');
@@ -73,8 +76,12 @@ export async function clearSampleData() {
   await db.delete(teams);
   console.log('  ✓ Cleared all teams (0 teams remaining)');
 
-  // 11. Deduplicate dynamic roles, retaining only the canonical 6 roles
-  const canonicalRoleNames = ['Super Admin', 'Admin', 'Manager', 'Team Lead', 'Employee', 'Custom Role'];
+  // 10b. Delete all departments
+  await db.delete(departments);
+  console.log('  ✓ Cleared all departments (0 departments remaining)');
+
+  // 11. Deduplicate dynamic roles, retaining only baseline configured roles
+  const canonicalRoleNames = getSeedConfig().roles.map((r) => r.name);
   const allRoles = await db.select().from(roles);
   const seen = new Set<string>();
   const toDeleteRoleIds: string[] = [];
@@ -97,6 +104,19 @@ export async function clearSampleData() {
     }
   }
   console.log(`  ✓ Cleaned duplicate roles (retained canonical 6 roles)`);
+
+  // 12. Purge transient test accounts (e.g. anita.roy.*)
+  const allUsers = await db.select().from(users);
+  for (const u of allUsers) {
+    if (u.email.includes('anita.roy')) {
+      try {
+        await db.delete(users).where(eq(users.id, u.id));
+      } catch {
+        // ignore if foreign key is bound
+      }
+    }
+  }
+  console.log('  ✓ Purged transient test users');
 
   console.log('✨ All sample data and sample projects successfully removed! Database is now a pure clean slate.');
 }

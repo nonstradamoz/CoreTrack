@@ -14,7 +14,6 @@ import {
   CalendarCheck2,
   CheckCircle2,
   Clock,
-  AlertOctagon,
   Copy,
   Check,
   Send,
@@ -22,9 +21,12 @@ import {
   User,
   Calendar,
   Sparkles,
-  ChevronRight,
-  ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
+
+function getLocalDateStr(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 interface DailyStatusDrawerProps {
   isOpen: boolean;
@@ -36,12 +38,10 @@ export function DailyStatusDrawer({ isOpen, onClose }: DailyStatusDrawerProps) {
   const { activeProject } = useProject();
 
   const [activeTab, setActiveTab] = useState<'MY_STATUS' | 'TEAM_STANDUPS'>('MY_STATUS');
-  const [selectedDate, setSelectedDate] = useState<string>(
-    new Date().toISOString().split('T')[0]
-  );
+  const [selectedDate, setSelectedDate] = useState<string>(() => getLocalDateStr());
   const [copiedType, setCopiedType] = useState<'MARKDOWN' | 'TEXT' | null>(null);
+  const [copiedEntryId, setCopiedEntryId] = useState<string | null>(null);
   const [customNotes, setCustomNotes] = useState('');
-  const [blockersInput, setBlockersInput] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Close on Escape & toggle on Cmd+D
@@ -56,25 +56,40 @@ export function DailyStatusDrawer({ isOpen, onClose }: DailyStatusDrawerProps) {
   }, [isOpen, onClose]);
 
   // Query today's status
-  const { data: todayData, isLoading: isLoadingToday } = useQuery({
+  const { data: todayData, isLoading: isLoadingToday, refetch: refetchToday } = useQuery({
     queryKey: ['todayStandup', activeProject?.key],
     queryFn: () => (activeProject ? fetchTodayStandup(activeProject.key) : Promise.resolve(null)),
     enabled: isOpen && !!activeProject,
+    staleTime: 0,
   });
 
+  // Always refresh today's compiled tasks when opening the drawer
+  useEffect(() => {
+    if (isOpen && activeProject) {
+      refetchToday();
+    }
+  }, [isOpen, activeProject, refetchToday]);
+
   // Query team standups
-  const { data: teamData, isLoading: isLoadingTeam } = useQuery({
+  const {
+    data: teamData,
+    isLoading: isLoadingTeam,
+    isError: isTeamError,
+    error: teamError,
+    refetch: refetchTeam,
+    isFetching: isFetchingTeam,
+  } = useQuery({
     queryKey: ['teamStandups', activeProject?.key, selectedDate],
     queryFn: () =>
       activeProject ? fetchTeamStandups(activeProject.key, selectedDate) : Promise.resolve(null),
     enabled: isOpen && activeTab === 'TEAM_STANDUPS' && !!activeProject,
+    staleTime: 0,
   });
 
   // Sync saved inputs if already submitted
   useEffect(() => {
     if (todayData?.savedStandup) {
       setCustomNotes(todayData.savedStandup.customNotes || '');
-      setBlockersInput(todayData.savedStandup.blockers || '');
     }
   }, [todayData]);
 
@@ -92,8 +107,6 @@ export function DailyStatusDrawer({ isOpen, onClose }: DailyStatusDrawerProps) {
   if (!isOpen) return null;
 
   const completedList: StandupTaskItem[] = todayData?.autoCompiled.completed || [];
-  const inProgressList: StandupTaskItem[] = todayData?.autoCompiled.inProgress || [];
-  const blockedList: StandupTaskItem[] = todayData?.autoCompiled.blocked || [];
 
   // Generate dynamic formatted summary text for 1-click copy
   const todayFormattedDate = new Date().toLocaleDateString(undefined, {
@@ -111,22 +124,6 @@ ${completedList.length > 0
         .map((t) => `• [${t.key}] ${t.title}${t.storyPoints ? ` (${t.storyPoints} pts)` : ''}`)
         .join('\n')
       : '• None yet'
-    }
-
-*In Progress:*
-${inProgressList.length > 0
-      ? inProgressList
-        .map((t) => `• [${t.key}] ${t.title}${t.storyPoints ? ` (${t.storyPoints} pts)` : ''}`)
-        .join('\n')
-      : '• None'
-    }
-
-*Blockers:*
-${blockedList.length > 0
-      ? blockedList.map((t) => `• [${t.key}] ${t.title} (Blocked)`).join('\n')
-      : blockersInput.trim()
-        ? `• ${blockersInput.trim()}`
-        : '• None'
     }${customNotes.trim()
       ? `\n\n📝 *Notes:*\n${customNotes.trim()}`
       : ''
@@ -147,8 +144,8 @@ ${blockedList.length > 0
       projectId: activeProject.id,
       standupDate: todayData.date,
       completedTaskIds: completedList,
-      inProgressTaskIds: inProgressList,
-      blockers: blockersInput,
+      inProgressTaskIds: [],
+      blockers: '',
       customNotes,
       summaryMarkdown: markdownSummary,
     });
@@ -361,60 +358,8 @@ ${blockedList.length > 0
                       )}
                     </div>
 
-                    {/* In Progress List */}
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-xs font-semibold text-slate-800 dark:text-slate-200">
-                        <span className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400">
-                          <Clock className="h-3.5 w-3.5" />
-                          In Progress ({inProgressList.length})
-                        </span>
-                      </div>
-                      {inProgressList.length === 0 ? (
-                        <p className="text-xs text-slate-400 italic p-2.5 rounded-lg border border-dashed border-slate-200 dark:border-slate-800">
-                          No tasks in progress.
-                        </p>
-                      ) : (
-                        <div className="space-y-1.5">
-                          {inProgressList.map((t) => (
-                            <div
-                              key={t.key}
-                              className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800/60 text-xs flex items-center justify-between"
-                            >
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
-                                  {t.key}
-                                </span>
-                                <span className="truncate text-slate-800 dark:text-slate-200 font-medium">
-                                  {t.title}
-                                </span>
-                              </div>
-                              {t.storyPoints && (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                                  {t.storyPoints} pts
-                                </span>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Blockers & Notes Input */}
+                    {/* Notes Input */}
                     <div className="space-y-3 pt-2">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1">
-                          <AlertOctagon className="h-3.5 w-3.5 text-amber-600" />
-                          Blockers
-                        </label>
-                        <input
-                          type="text"
-                          value={blockersInput}
-                          onChange={(e) => setBlockersInput(e.target.value)}
-                          placeholder="e.g. Waiting on AWS IAM permissions"
-                          className="w-full px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
-                        />
-                      </div>
-
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                           Notes
@@ -439,11 +384,11 @@ ${blockedList.length > 0
                   <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                     <Calendar className="h-3.5 w-3.5 text-blue-600" /> Date:
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
-                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition ${selectedDate === new Date().toISOString().split('T')[0]
+                      onClick={() => setSelectedDate(getLocalDateStr())}
+                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition cursor-pointer ${selectedDate === getLocalDateStr()
                         ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 shadow-2xs'
                         : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'
                         }`}
@@ -455,9 +400,16 @@ ${blockedList.length > 0
                       onClick={() => {
                         const d = new Date();
                         d.setDate(d.getDate() - 1);
-                        setSelectedDate(d.toISOString().split('T')[0]);
+                        setSelectedDate(getLocalDateStr(d));
                       }}
-                      className="px-2.5 py-1 rounded-md text-xs font-medium bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-50"
+                      className={`px-2.5 py-1 rounded-md text-xs font-medium border transition cursor-pointer ${(() => {
+                        const d = new Date();
+                        d.setDate(d.getDate() - 1);
+                        return selectedDate === getLocalDateStr(d);
+                      })()
+                        ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 border-slate-900 dark:border-slate-100 shadow-2xs'
+                        : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-50'
+                        }`}
                     >
                       Yesterday
                     </button>
@@ -467,57 +419,130 @@ ${blockedList.length > 0
                       onChange={(e) => setSelectedDate(e.target.value)}
                       className="px-2 py-1 rounded-md text-xs border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
                     />
+                    <button
+                      type="button"
+                      onClick={() => refetchTeam()}
+                      disabled={isFetchingTeam}
+                      title="Refresh Team Feed"
+                      className="p-1.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${isFetchingTeam ? 'animate-spin' : ''}`} />
+                    </button>
                   </div>
                 </div>
 
                 {isLoadingTeam ? (
                   <div className="p-8 text-center text-xs text-slate-400">Loading team standups...</div>
-                ) : teamData?.standups.length === 0 ? (
+                ) : isTeamError ? (
+                  <div className="p-4 rounded-xl border border-rose-200 dark:border-rose-900/60 bg-rose-50/60 dark:bg-rose-950/20 text-xs text-rose-700 dark:text-rose-300 flex items-center justify-between">
+                    <span>{(teamError as Error)?.message || 'Failed to load team feed.'}</span>
+                    <button
+                      type="button"
+                      onClick={() => refetchTeam()}
+                      className="px-2.5 py-1 rounded-md bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-800 font-semibold cursor-pointer"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : !teamData?.standups?.length && !teamData?.unsubmittedActivity?.length ? (
                   <div className="p-12 text-center rounded-2xl border border-dashed border-slate-300 dark:border-slate-800">
                     <Users className="h-8 w-8 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
                     <h4 className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                      No standups submitted for {selectedDate}
+                      No standups or completed tasks for {selectedDate}
                     </h4>
                     <p className="text-xs text-slate-400 mt-1">
-                      Check back once team members complete their daily standup check-in.
+                      Check back once team members complete tasks or submit their daily standup.
                     </p>
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    {teamData?.standups.map((entry) => (
-                      <div
-                        key={entry.id}
-                        className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs space-y-3"
-                      >
-                        <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-                          <div className="flex items-center gap-2.5">
-                            <div className="h-7 w-7 rounded-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 flex items-center justify-center text-xs font-bold shadow-2xs">
-                              {(entry.user.fullName || 'U').charAt(0).toUpperCase()}
-                            </div>
-                            <div>
-                              <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                                {entry.user.fullName}
-                              </div>
-                              <div className="text-[10px] text-slate-400">{entry.user.email}</div>
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => copyToClipboard(entry.summaryMarkdown, 'MARKDOWN')}
-                            className="px-2 py-1 rounded text-[11px] font-medium text-slate-500 hover:text-blue-600 hover:bg-slate-50 dark:hover:bg-slate-800 transition flex items-center gap-1"
-                            title="Copy standup text"
+                  <div className="space-y-4">
+                    {teamData?.standups?.length > 0 && (
+                      <div className="space-y-3">
+                        {teamData.standups.map((entry) => (
+                          <div
+                            key={entry.id}
+                            className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs space-y-3"
                           >
-                            <Copy className="h-3 w-3" />
-                            <span>Copy</span>
-                          </button>
-                        </div>
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                              <div className="flex items-center gap-2.5">
+                                <div className="h-7 w-7 rounded-full bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 flex items-center justify-center text-xs font-bold shadow-2xs">
+                                  {(entry.user.fullName || 'U').charAt(0).toUpperCase()}
+                                </div>
+                                <div>
+                                  <div className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                                    {entry.user.fullName}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400">{entry.user.email}</div>
+                                </div>
+                              </div>
 
-                        <pre className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 font-mono text-[11px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
-                          {entry.summaryMarkdown}
-                        </pre>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(entry.summaryMarkdown);
+                                  setCopiedEntryId(entry.id);
+                                  setTimeout(() => setCopiedEntryId(null), 2000);
+                                }}
+                                className="px-2 py-1 rounded text-[11px] font-medium text-slate-500 hover:text-blue-600 hover:bg-slate-50 dark:hover:bg-slate-800 transition flex items-center gap-1 cursor-pointer"
+                                title="Copy standup text"
+                              >
+                                {copiedEntryId === entry.id ? (
+                                  <>
+                                    <Check className="h-3 w-3 text-emerald-600" />
+                                    <span className="text-emerald-600">Copied</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Copy className="h-3 w-3" />
+                                    <span>Copy</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+
+                            <pre className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 font-mono text-[11px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
+                              {entry.summaryMarkdown}
+                            </pre>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
+
+                    {teamData?.unsubmittedActivity && teamData.unsubmittedActivity.length > 0 && (
+                      <div className="space-y-2.5 pt-1">
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                          Completed Tasks (Standup Not Yet Submitted)
+                        </div>
+                        {teamData.unsubmittedActivity.map((item) => (
+                          <div
+                            key={item.user.id}
+                            className="p-3.5 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60 space-y-2"
+                          >
+                            <div className="flex items-center gap-2">
+                              <div className="h-6 w-6 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-bold">
+                                {(item.user.fullName || 'U').charAt(0).toUpperCase()}
+                              </div>
+                              <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                                {item.user.fullName}
+                              </div>
+                              <span className="ml-auto text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300">
+                                {item.completedTasks.length} done
+                              </span>
+                            </div>
+                            <ul className="space-y-1">
+                              {item.completedTasks.map((t) => (
+                                <li key={t.key} className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-2">
+                                  <span className="font-mono text-[10px] font-bold text-emerald-700 dark:text-emerald-400">
+                                    {t.key}
+                                  </span>
+                                  <span className="truncate">{t.title}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

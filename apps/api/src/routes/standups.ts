@@ -6,17 +6,19 @@ import {
   dailyStandups,
   tickets,
   projects,
-  users,
-  ticketDependencies,
+  teamMembers,
   eq,
   and,
+  or,
+  isNull,
   inArray,
   desc,
   gte,
-  lte,
+  lt,
 } from '@coretrack/db';
 import { SaveDailyStandupSchema } from '@coretrack/shared';
 import { broadcastToProject } from '../ws.js';
+import { getCurrentUser, getUserRoleTier, getUserTeamIds } from '../auth/auth.js';
 
 export const standupRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -36,9 +38,8 @@ export const standupRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const { projectKey } = request.query;
 
-      // In production IAM, extracted from JWT session. Fallback to active mock user.
-      const defaultUser = await db.query.users.findFirst();
-      if (!defaultUser) {
+      const currentUser = await getCurrentUser(request);
+      if (!currentUser) {
         return reply.status(401).send({ error: 'No authenticated user available' });
       }
 
@@ -53,57 +54,28 @@ export const standupRoutes: FastifyPluginAsync = async (fastify) => {
       const today = new Date();
       const todayDateStr = today.toISOString().split('T')[0];
 
-      // Start and end of today in local/UTC
+      // Start of today in server local time
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
 
-      // A. Query tasks completed today
+      // A. Query tasks completed today for the current user (assigned to them, or unassigned & reported by them)
       const completedTodayRaw = await db.query.tickets.findMany({
         where: and(
           eq(tickets.projectId, proj.id),
-          eq(tickets.assigneeId, defaultUser.id),
+          or(
+            eq(tickets.assigneeId, currentUser.id),
+            and(isNull(tickets.assigneeId), eq(tickets.reporterId, currentUser.id))
+          ),
           inArray(tickets.status, ['DONE', 'RESOLVED']),
           gte(tickets.updatedAt, startOfDay)
         ),
         orderBy: desc(tickets.updatedAt),
       });
 
-      // B. Query tasks currently in progress
-      const inProgressRaw = await db.query.tickets.findMany({
-        where: and(
-          eq(tickets.projectId, proj.id),
-          eq(tickets.assigneeId, defaultUser.id),
-          eq(tickets.status, 'IN_PROGRESS')
-        ),
-        orderBy: desc(tickets.updatedAt),
-      });
-
-      // C. Query blocked tasks
-      const allMyOpenTickets = await db.query.tickets.findMany({
-        where: and(
-          eq(tickets.projectId, proj.id),
-          eq(tickets.assigneeId, defaultUser.id),
-          inArray(tickets.status, ['TODO', 'IN_PROGRESS', 'IN_REVIEW', 'PENDING_APPROVAL'])
-        ),
-      });
-
-      const openTicketIds = allMyOpenTickets.map((t) => t.id);
-      let blockedTickets: typeof allMyOpenTickets = [];
-      if (openTicketIds.length > 0) {
-        const blockingDeps = await db.query.ticketDependencies.findMany({
-          where: and(
-            inArray(ticketDependencies.targetTicketId, openTicketIds),
-            eq(ticketDependencies.dependencyType, 'BLOCKS')
-          ),
-        });
-        const blockedTargetIds = new Set(blockingDeps.map((d) => d.targetTicketId));
-        blockedTickets = allMyOpenTickets.filter((t) => blockedTargetIds.has(t.id));
-      }
-
       // Check if user already submitted a standup for today
       const savedStandup = await db.query.dailyStandups.findFirst({
         where: and(
-          eq(dailyStandups.userId, defaultUser.id),
+          eq(dailyStandups.userId, currentUser.id),
           eq(dailyStandups.projectId, proj.id),
           eq(dailyStandups.standupDate, todayDateStr)
         ),
@@ -117,18 +89,6 @@ export const standupRoutes: FastifyPluginAsync = async (fastify) => {
             .join('\n')
           : '• None yet';
 
-      const inProgressBullets =
-        inProgressRaw.length > 0
-          ? inProgressRaw
-            .map((t) => `• [${t.ticketKey}] ${t.title}${t.storyPoints ? ` (${t.storyPoints} pts)` : ''}`)
-            .join('\n')
-          : '• None';
-
-      const blockerBullets =
-        blockedTickets.length > 0
-          ? blockedTickets.map((t) => `• [${t.ticketKey}] ${t.title} (Blocked by dependency)`).join('\n')
-          : savedStandup?.blockers || '• None';
-
       const generatedSummaryMarkdown = `*Daily Status Update — ${today.toLocaleDateString(undefined, {
         month: 'short',
         day: 'numeric',
@@ -136,20 +96,14 @@ export const standupRoutes: FastifyPluginAsync = async (fastify) => {
       })}*
 
 *Completed Today:*
-${completedBullets}
-
-⏳ *In Progress:*
-${inProgressBullets}
-
-🚫 *Blockers:*
-${blockerBullets}`;
+${completedBullets}`;
 
       return reply.send({
         data: {
           user: {
-            id: defaultUser.id,
-            fullName: defaultUser.fullName,
-            email: defaultUser.email,
+            id: currentUser.id,
+            fullName: currentUser.fullName,
+            email: currentUser.email,
           },
           project: {
             id: proj.id,
@@ -166,20 +120,8 @@ ${blockerBullets}`;
               priority: t.priority,
               storyPoints: t.storyPoints,
             })),
-            inProgress: inProgressRaw.map((t) => ({
-              key: t.ticketKey,
-              title: t.title,
-              status: t.status,
-              priority: t.priority,
-              storyPoints: t.storyPoints,
-            })),
-            blocked: blockedTickets.map((t) => ({
-              key: t.ticketKey,
-              title: t.title,
-              status: t.status,
-              priority: t.priority,
-              storyPoints: t.storyPoints,
-            })),
+            inProgress: [],
+            blocked: [],
           },
           generatedSummaryMarkdown,
         },
@@ -200,8 +142,8 @@ ${blockerBullets}`;
     async (request, reply) => {
       const body = request.body;
 
-      const defaultUser = await db.query.users.findFirst();
-      if (!defaultUser) {
+      const currentUser = await getCurrentUser(request);
+      if (!currentUser) {
         return reply.status(401).send({ error: 'No authenticated user available' });
       }
 
@@ -216,7 +158,7 @@ ${blockerBullets}`;
       // Check if already exists for upsert
       const existing = await db.query.dailyStandups.findFirst({
         where: and(
-          eq(dailyStandups.userId, defaultUser.id),
+          eq(dailyStandups.userId, currentUser.id),
           eq(dailyStandups.projectId, body.projectId),
           eq(dailyStandups.standupDate, body.standupDate)
         ),
@@ -241,7 +183,7 @@ ${blockerBullets}`;
         const [inserted] = await db
           .insert(dailyStandups)
           .values({
-            userId: defaultUser.id,
+            userId: currentUser.id,
             projectId: body.projectId,
             standupDate: body.standupDate,
             completedTaskIds: body.completedTaskIds,
@@ -259,8 +201,8 @@ ${blockerBullets}`;
         type: 'STANDUP_SUBMITTED',
         payload: {
           standupId: result.id,
-          userId: defaultUser.id,
-          userName: defaultUser.fullName,
+          userId: currentUser.id,
+          userName: currentUser.fullName,
           date: result.standupDate,
         },
       });
@@ -284,18 +226,58 @@ ${blockerBullets}`;
     },
     async (request, reply) => {
       const { projectKey, date } = request.query;
+      const normalizedKey = projectKey.toUpperCase();
+      const caller = await getCurrentUser(request);
 
       const proj = await db.query.projects.findFirst({
-        where: eq(projects.key, projectKey),
+        where: eq(projects.key, normalizedKey),
+        with: {
+          assignedTeams: true,
+        },
       });
 
       if (!proj) {
         return reply.status(404).send({ error: 'Project not found' });
       }
 
-      const targetDate = date || new Date().toISOString().split('T')[0];
+      const now = new Date();
+      const localToday = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const targetDate = date || localToday;
 
-      const standups = await db.query.dailyStandups.findMany({
+      // Determine team-level visibility for Team Feed
+      let callerTeamIds: string[] = [];
+      let isAuthority = false;
+      if (caller) {
+        callerTeamIds = await getUserTeamIds(caller.id);
+        const tierInfo = await getUserRoleTier(caller.id, normalizedKey);
+        isAuthority =
+          tierInfo.tier >= 3 ||
+          proj.projectManagerId === caller.id ||
+          proj.reviewerId === caller.id;
+      }
+
+      const projectAssignedTeamIds = new Set<string>(
+        proj.assignedTeams.map((at) => at.teamId)
+      );
+      if (proj.primaryTeamId) {
+        projectAssignedTeamIds.add(proj.primaryTeamId);
+      }
+
+      let allowedTeamUserIds: Set<string> | null = null;
+      if (!isAuthority && caller) {
+        allowedTeamUserIds = new Set<string>([caller.id]);
+        if (callerTeamIds.length > 0) {
+          const teammates = await db
+            .select({ userId: teamMembers.userId })
+            .from(teamMembers)
+            .where(inArray(teamMembers.teamId, callerTeamIds));
+          for (const tm of teammates) {
+            allowedTeamUserIds.add(tm.userId);
+          }
+        }
+      }
+
+      const allStandups = await db.query.dailyStandups.findMany({
         where: and(
           eq(dailyStandups.projectId, proj.id),
           eq(dailyStandups.standupDate, targetDate)
@@ -306,9 +288,84 @@ ${blockerBullets}`;
         },
       });
 
+      const standups = allowedTeamUserIds
+        ? allStandups.filter((s) => allowedTeamUserIds!.has(s.userId))
+        : allStandups;
+
+      // Also surface live completed tasks on targetDate scoped strictly to the respective assigned teams
+      const [y, m, d] = targetDate.split('-').map(Number);
+      const dayStart = new Date(y, (m || 1) - 1, d || 1, 0, 0, 0, 0);
+      const dayEnd = new Date(y, (m || 1) - 1, d || 1, 23, 59, 59, 999);
+
+      const completedOnDateRaw = await db.query.tickets.findMany({
+        where: and(
+          eq(tickets.projectId, proj.id),
+          inArray(tickets.status, ['DONE', 'RESOLVED']),
+          gte(tickets.updatedAt, dayStart),
+          lt(tickets.updatedAt, dayEnd)
+        ),
+        with: {
+          assignee: {
+            columns: { id: true, fullName: true, email: true },
+          },
+          reporter: {
+            columns: { id: true, fullName: true, email: true },
+          },
+        },
+        orderBy: desc(tickets.updatedAt),
+      });
+
+      const completedOnDate = completedOnDateRaw.filter((t) => {
+        if (!t.teamId) return false;
+        if (!isAuthority) {
+          return callerTeamIds.includes(t.teamId);
+        }
+        return projectAssignedTeamIds.size > 0 ? projectAssignedTeamIds.has(t.teamId) : true;
+      });
+
+      const submittedUserIds = new Set(standups.map((s) => s.userId));
+      const activityByUser = new Map<
+        string,
+        {
+          user: { id: string; fullName: string; email: string };
+          completedTasks: Array<{
+            key: string;
+            title: string;
+            status: string;
+            priority: string;
+            storyPoints: number | null;
+          }>;
+        }
+      >();
+
+      for (const t of completedOnDate) {
+        const owner = t.assignee ?? t.reporter;
+        if (!owner || submittedUserIds.has(owner.id)) continue;
+
+        let bucket = activityByUser.get(owner.id);
+        if (!bucket) {
+          bucket = {
+            user: {
+              id: owner.id,
+              fullName: owner.fullName,
+              email: owner.email,
+            },
+            completedTasks: [],
+          };
+          activityByUser.set(owner.id, bucket);
+        }
+        bucket.completedTasks.push({
+          key: t.ticketKey,
+          title: t.title,
+          status: t.status,
+          priority: t.priority,
+          storyPoints: t.storyPoints,
+        });
+      }
+
       return reply.send({
         data: {
-          projectKey,
+          projectKey: normalizedKey,
           date: targetDate,
           standups: standups.map((s) => ({
             id: s.id,
@@ -326,6 +383,7 @@ ${blockerBullets}`;
             createdAt: s.createdAt,
             updatedAt: s.updatedAt,
           })),
+          unsubmittedActivity: Array.from(activityByUser.values()),
         },
       });
     }

@@ -1,14 +1,16 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { useProject } from '../../context/ProjectContext';
+import { usePermissions } from '../../hooks/usePermissions';
 import {
   fetchPortfolioDashboard,
   fetchTicket,
   fetchProjectMetrics,
   fetchTeams,
+  fetchCurrentUser,
   PortfolioDashboardData,
   Ticket,
   Team,
@@ -28,13 +30,46 @@ import {
   MoreHorizontal,
   ChevronRight,
   Sparkles,
+  Star,
 } from 'lucide-react';
 
 export default function PortfolioDashboardPage() {
   const router = useRouter();
-  const { setSelectedProjectKey } = useProject();
+  const { projects, setSelectedProjectKey } = useProject();
+  const { isOrgAdmin, roleTier } = usePermissions();
+  const canCreateProject = isOrgAdmin || roleTier >= 3;
+
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [activeTab, setActiveTab] = useState<'CALENDAR' | 'TEAMS' | 'FAVORITE'>('CALENDAR');
+  const [favoriteKeys, setFavoriteKeys] = useState<string[]>([]);
+
+  const { data: currentUser } = useQuery({
+    queryKey: ['currentUser'],
+    queryFn: fetchCurrentUser,
+  });
+
+  const favStorageKey = `coretrack_favorites_${currentUser?.email || 'default'}`;
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(favStorageKey);
+      setFavoriteKeys(raw ? JSON.parse(raw) : []);
+    } catch {
+      setFavoriteKeys([]);
+    }
+  }, [favStorageKey]);
+
+  const toggleFavorite = (key: string) => {
+    setFavoriteKeys((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key];
+      try {
+        localStorage.setItem(favStorageKey, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  };
 
   const { data: dashboard, isLoading } = useQuery<PortfolioDashboardData>({
     queryKey: ['portfolioDashboard'],
@@ -86,7 +121,8 @@ export default function PortfolioDashboardPage() {
   // Generate 7 days centered on today
   const calendarDays = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(today);
-    d.setDate(today.getDate() - 3 + i);
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - 3 + i);
     const isToday = d.toDateString() === today.toDateString();
     return {
       date: d,
@@ -103,27 +139,59 @@ export default function PortfolioDashboardPage() {
     };
   });
 
-  const scheduledDeadlines = metrics?.upcomingDeadlines || [];
+  const windowStartMs = calendarDays[0].date.getTime();
+  const windowEndMs = calendarDays[6].date.getTime() + 86400000 - 1;
+  const windowSpanMs = windowEndMs - windowStartMs;
+
+  const computeBarSpan = (startIso?: string | null, endIso?: string | null) => {
+    if (!startIso && !endIso) return null;
+    const rawStart = startIso ? new Date(startIso).setHours(0, 0, 0, 0) : new Date(endIso!).setHours(0, 0, 0, 0);
+    const rawEnd = endIso ? new Date(endIso).setHours(23, 59, 59, 999) : rawStart + 86400000 - 1;
+    if (rawEnd < windowStartMs || rawStart > windowEndMs) return null;
+    const clampedStart = Math.max(windowStartMs, rawStart);
+    const clampedEnd = Math.min(windowEndMs, rawEnd);
+    const leftPct = Math.max(0, Math.min(96, ((clampedStart - windowStartMs) / windowSpanMs) * 100));
+    const widthPct = Math.max(12, Math.min(100 - leftPct, ((clampedEnd - clampedStart) / windowSpanMs) * 100));
+    return { leftPct, widthPct };
+  };
+
   const scheduleItems = [
-    ...scheduledDeadlines.map((d) => ({
-      id: d.id,
-      key: d.key,
-      title: `${d.name} Deadline`,
-      dueTime: d.deadline ? new Date(d.deadline).toLocaleDateString() : 'Upcoming',
-      color: 'purple',
-      type: 'PROJECT' as const,
-    })),
-    ...criticalRiskTickets.map((t) => ({
-      id: t.id,
-      key: t.ticketKey,
-      title: t.title,
-      dueTime: t.slaResolutionDueAt
-        ? new Date(t.slaResolutionDueAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        : 'Due Soon',
-      color: t.priority === 'URGENT' ? 'rose' : 'blue',
-      type: 'TICKET' as const,
-    })),
+    ...projects
+      .filter((p) => p.startDate || p.deadline)
+      .map((p) => {
+        const span = computeBarSpan(p.startDate, p.deadline);
+        const startLabel = p.startDate ? new Date(p.startDate).toLocaleDateString([], { month: 'short', day: 'numeric' }) : null;
+        const endLabel = p.deadline ? new Date(p.deadline).toLocaleDateString([], { month: 'short', day: 'numeric' }) : null;
+        return {
+          id: p.id,
+          key: p.key,
+          title: p.name,
+          dueTime: startLabel && endLabel ? `${startLabel} → ${endLabel}` : endLabel ? `Due ${endLabel}` : `Starts ${startLabel}`,
+          color: 'purple',
+          type: 'PROJECT' as const,
+          span,
+        };
+      })
+      .filter((item) => item.span !== null),
+    ...criticalRiskTickets
+      .map((t) => {
+        const span = computeBarSpan(null, t.slaResolutionDueAt);
+        return {
+          id: t.id,
+          key: t.ticketKey,
+          title: t.title,
+          dueTime: t.slaResolutionDueAt
+            ? new Date(t.slaResolutionDueAt).toLocaleDateString([], { month: 'short', day: 'numeric' })
+            : 'Due Soon',
+          color: t.priority === 'URGENT' ? 'rose' : 'blue',
+          type: 'TICKET' as const,
+          span,
+        };
+      })
+      .filter((item) => item.span !== null),
   ];
+
+  const upcomingDeadlines = metrics?.upcomingDeadlines || [];
 
   // Project card gradients matching reference image
   const cardThemes = [
@@ -158,13 +226,15 @@ export default function PortfolioDashboardPage() {
             </p>
           </div>
 
-          <button
-            onClick={() => router.push('/projects')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-2xs transition active:scale-[0.98] cursor-pointer"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            <span>Add</span>
-          </button>
+          {canCreateProject && (
+            <button
+              onClick={() => router.push('/projects')}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-2xs transition active:scale-[0.98] cursor-pointer"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Add</span>
+            </button>
+          )}
         </div>
 
         {/* Project Cards Row */}
@@ -176,20 +246,27 @@ export default function PortfolioDashboardPage() {
               </div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 mb-1">No Projects Found</h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mb-4">
-                Your workspace is completely clean. Create your first project to start tracking sprints, tasks, and project deliverables.
+                Your workspace is completely clean. {canCreateProject ? 'Create your first project to start tracking sprints, tasks, and project deliverables.' : 'Projects assigned to your team will appear here.'}
               </p>
-              <button
-                onClick={() => router.push('/projects')}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-2xs transition active:scale-95 cursor-pointer"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Create Project</span>
-              </button>
+              {canCreateProject && (
+                <button
+                  onClick={() => router.push('/projects')}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-2xs transition active:scale-95 cursor-pointer"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  <span>Create Project</span>
+                </button>
+              )}
             </div>
           ) : (
             projectsHealth.slice(0, 3).map((proj, idx) => {
               const theme = cardThemes[idx % cardThemes.length];
               const pct = proj.completionPercentage || 0;
+              const isFav = favoriteKeys.includes(proj.key);
+              const fullProj = projects.find((p) => p.key === proj.key);
+              const deadlineLabel = fullProj?.deadline
+                ? new Date(fullProj.deadline).toLocaleDateString([], { month: 'short', day: 'numeric' })
+                : 'No deadline';
 
               return (
                 <div
@@ -222,12 +299,12 @@ export default function PortfolioDashboardPage() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleNavigateProject(proj.key, 'board');
+                        toggleFavorite(proj.key);
                       }}
-                      title="Options"
-                      className="p-1 rounded-full hover:bg-white/20 text-white/80 transition"
+                      title={isFav ? 'Remove from Favorites' : 'Pin to Favorites'}
+                      className="p-1.5 rounded-full hover:bg-white/20 text-white transition cursor-pointer"
                     >
-                      <MoreHorizontal className="h-4 w-4" />
+                      <Star className={`h-4 w-4 ${isFav ? 'fill-amber-300 text-amber-300' : 'text-white/80'}`} />
                     </button>
                   </div>
 
@@ -268,7 +345,7 @@ export default function PortfolioDashboardPage() {
 
                     <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium ${theme.pill} backdrop-blur-xs`}>
                       <Calendar className="h-3 w-3" />
-                      <span>Dec 25</span>
+                      <span>{deadlineLabel}</span>
                     </div>
                   </div>
                 </div>
@@ -365,35 +442,51 @@ export default function PortfolioDashboardPage() {
                       ? 'bg-rose-700 text-white'
                       : 'bg-blue-700 text-white';
 
-                  const margins = ['ml-[5%]', 'ml-[15%]', 'ml-[25%]', 'ml-[10%]'];
-                  const marginClass = margins[idx % margins.length];
-
                   return (
-                    <div
-                      key={item.id}
-                      onClick={() => {
-                        if (item.type === 'PROJECT') {
-                          handleNavigateProject(item.key, 'board');
-                        } else {
-                          handleOpenTicketByKey(item.key);
-                        }
-                      }}
-                      className={`${marginClass} max-w-[80%] p-2.5 rounded-2xl border ${colorClasses} flex items-center justify-between gap-3 shadow-2xs hover:shadow-xs transition cursor-pointer group`}
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className={`h-5 px-1.5 rounded-full ${badgeColor} text-[9px] font-bold flex items-center justify-center shrink-0`}>
-                          {item.key}
+                    <div key={item.id} className="relative h-10 w-full">
+                      <div
+                        onClick={() => {
+                          if (item.type === 'PROJECT') {
+                            handleNavigateProject(item.key, 'board');
+                          } else {
+                            handleOpenTicketByKey(item.key);
+                          }
+                        }}
+                        style={{
+                          left: `${item.span!.leftPct}%`,
+                          width: `${item.span!.widthPct}%`,
+                        }}
+                        className={`absolute top-0 bottom-0 px-3 rounded-2xl border ${colorClasses} flex items-center justify-between gap-2 shadow-2xs hover:shadow-xs transition cursor-pointer group overflow-hidden`}
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`h-5 px-1.5 rounded-full ${badgeColor} text-[9px] font-bold flex items-center justify-center shrink-0`}>
+                            {item.key}
+                          </div>
+                          <span className="text-xs font-bold truncate group-hover:underline">
+                            {item.title}
+                          </span>
                         </div>
-                        <span className="text-xs font-bold truncate group-hover:underline">
-                          {item.title}
+                        <span className="text-[10px] font-mono opacity-80 shrink-0 hidden sm:inline">
+                          {item.dueTime}
                         </span>
                       </div>
-                      <span className="text-[10px] font-mono opacity-80 shrink-0">
-                        {item.dueTime}
-                      </span>
                     </div>
                   );
                 })
+              )}
+              {upcomingDeadlines.length > 0 && (
+                <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center gap-2 text-[11px]">
+                  <span className="text-slate-400 font-medium">Upcoming deadlines:</span>
+                  {upcomingDeadlines.slice(0, 4).map((d) => (
+                    <button
+                      key={d.id}
+                      onClick={() => handleNavigateProject(d.key, 'board')}
+                      className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-950/50 text-slate-700 dark:text-slate-300 font-medium cursor-pointer"
+                    >
+                      {d.key} · {d.deadline ? new Date(d.deadline).toLocaleDateString([], { month: 'short', day: 'numeric' }) : 'Soon'}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           </div>
@@ -432,13 +525,52 @@ export default function PortfolioDashboardPage() {
         )}
 
         {/* Tab 3: FAVORITES VIEW */}
-        {activeTab === 'FAVORITE' && (
-          <div className="py-8 px-4 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 flex flex-col items-center justify-center">
-            <Sparkles className="h-6 w-6 text-slate-300 dark:text-slate-600 mb-1.5" />
-            <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">No favorites pinned</p>
-            <p className="text-[11px] text-slate-400 mt-0.5">Pin frequently used projects or tasks to access them quickly.</p>
-          </div>
-        )}
+        {activeTab === 'FAVORITE' && (() => {
+          const favProjects = projectsHealth.filter((p) => favoriteKeys.includes(p.key));
+          if (favProjects.length === 0) {
+            return (
+              <div className="py-8 px-4 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 flex flex-col items-center justify-center">
+                <Star className="h-6 w-6 text-slate-300 dark:text-slate-600 mb-1.5" />
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">No favorite projects pinned</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Click the star icon on any project card above to pin it here for quick access.
+                </p>
+              </div>
+            );
+          }
+          return (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {favProjects.map((fp) => (
+                <div
+                  key={fp.id}
+                  onClick={() => handleNavigateProject(fp.key, 'board')}
+                  className="p-3.5 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800/80 transition cursor-pointer flex items-center justify-between gap-2"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">{fp.name}</span>
+                      <span className="text-[10px] font-mono text-blue-600 dark:text-blue-400 font-semibold">({fp.key})</span>
+                    </div>
+                    <span className="text-[11px] text-slate-400">
+                      {fp.completionPercentage || 0}% complete · {fp.totalTickets || 0} tasks
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFavorite(fp.key);
+                    }}
+                    title="Unpin from Favorites"
+                    className="p-1.5 rounded-lg hover:bg-white dark:hover:bg-slate-700 cursor-pointer shrink-0"
+                  >
+                    <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
       </section>
 
       {/* 3. EXECUTIVE KPI TELEMETRY & WORKLOAD STATS (CLICKABLE CARDS) */}

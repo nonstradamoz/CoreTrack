@@ -52,7 +52,11 @@ export const API_URL = {
 export interface Ticket {
   id: string;
   projectId: string;
+  teamId?: string | null;
+  team?: { id: string; name: string; keyPrefix: string } | null;
   ticketKey: string;
+  displayKey?: string;
+  userTicketNumber?: number;
   ticketNumber: number;
   ticketType: 'INITIATIVE' | 'EPIC' | 'STORY' | 'TASK' | 'BUG' | 'SERVICE_REQUEST' | 'INCIDENT';
   parentId?: string | null;
@@ -126,7 +130,29 @@ export interface Project {
     name: string;
     keyPrefix: string;
     lead?: { id: string; fullName: string; email: string } | null;
+    members?: Array<{
+      id: string;
+      teamId: string;
+      userId: string;
+      role: 'LEAD' | 'MEMBER';
+      user?: { id: string; fullName: string; email: string };
+    }>;
   } | null;
+  assignedTeams?: Array<{
+    id: string;
+    name: string;
+    keyPrefix: string;
+    description?: string | null;
+    leadId?: string | null;
+    lead?: { id: string; fullName: string; email: string } | null;
+    members?: Array<{
+      id: string;
+      teamId: string;
+      userId: string;
+      role: 'LEAD' | 'MEMBER';
+      user?: { id: string; fullName: string; email: string };
+    }>;
+  }>;
   department?: { id: string; name: string; code: string } | null;
 }
 
@@ -169,10 +195,13 @@ export interface ProjectDetail extends Project {
   tickets: Array<{
     id: string;
     ticketKey: string;
+    displayKey?: string;
     title: string;
     status: string;
     priority: string;
     assigneeId?: string | null;
+    teamId?: string | null;
+    team?: { id: string; name: string; keyPrefix: string } | null;
     dueDate?: string | null;
   }>;
   ticketStatusBreakdown: Record<string, number>;
@@ -246,18 +275,22 @@ export interface UserPersona {
   id: string;
   email: string;
   fullName: string;
+  designation?: string | null;
   userType: string;
   status?: string;
   globalPermissions: string;
   effectivePermissions?: string;
   roleName?: string;
   roleTier?: number;
+  mustChangePassword?: boolean;
   createdAt?: string;
 }
 
 export interface CreateUserPayload {
   fullName: string;
   email: string;
+  password: string;
+  designation?: string | null;
   role: 'SUPER_ADMIN' | 'ADMIN' | 'MANAGER' | 'TEAM_LEAD' | 'EMPLOYEE';
   userType?: 'INTERNAL_EMPLOYEE' | 'EXTERNAL_GUEST';
   status?: 'ACTIVE' | 'INACTIVE';
@@ -269,9 +302,11 @@ export interface CreateUserPayload {
 
 export interface UpdateUserPayload {
   fullName?: string;
+  designation?: string | null;
   role?: 'SUPER_ADMIN' | 'ADMIN' | 'MANAGER' | 'TEAM_LEAD' | 'EMPLOYEE';
   userType?: 'INTERNAL_EMPLOYEE' | 'EXTERNAL_GUEST';
   status?: 'ACTIVE' | 'INACTIVE';
+  password?: string;
 }
 
 export async function fetchProjects(): Promise<Project[]> {
@@ -297,6 +332,7 @@ export async function fetchTicket(ticketKey: string): Promise<Ticket> {
 
 export async function createTicket(data: {
   projectId: string;
+  teamId?: string;
   title: string;
   description?: string;
   ticketType: Ticket['ticketType'];
@@ -496,11 +532,52 @@ export async function loginUser(email: string, password?: string): Promise<{ mes
     body: JSON.stringify({ email, password }),
   });
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error || err.message || 'Invalid test credentials');
+    const err = await res.json().catch(() => ({}));
+    const error = new Error(err.error || err.message || 'Invalid email or password') as Error & {
+      code?: string;
+    };
+    if (err.code) error.code = err.code;
+    throw error;
   }
   if (typeof window !== 'undefined') {
     localStorage.setItem('coretrack_user_email', email);
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function setupInitialPassword(
+  email: string,
+  password: string
+): Promise<{ message: string; user: UserPersona }> {
+  const res = await fetch(`${API_URL}/api/v1/auth/setup-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || err.message || 'Failed to set password');
+  }
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('coretrack_user_email', email);
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function changeOwnPassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<{ message: string }> {
+  const res = await fetch(`${API_URL}/api/v1/auth/change-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || err.message || 'Failed to update password');
   }
   const json = await res.json();
   return json.data;
@@ -1008,6 +1085,42 @@ export async function triggerDeadlineScan(): Promise<{ success: boolean; message
   return res.json();
 }
 
+export interface DeadlineSchedulerStatus {
+  isActive: boolean;
+  intervalMinutes: number;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastSummary: DeadlineScanSummary | null;
+}
+
+export async function fetchSchedulerStatus(): Promise<DeadlineSchedulerStatus> {
+  const res = await fetch(`${API_URL}/api/v1/automation/scheduler`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'Failed to fetch deadline scheduler status');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function updateSchedulerStatus(payload: {
+  isActive?: boolean;
+  intervalMinutes?: number;
+  runImmediately?: boolean;
+}): Promise<DeadlineSchedulerStatus> {
+  const res = await fetch(`${API_URL}/api/v1/automation/scheduler`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'Failed to update scheduler configuration');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
 export interface EmailNotificationLog {
   id: string;
   recipientEmail: string;
@@ -1024,7 +1137,7 @@ export interface EmailNotificationLog {
 
 export interface EmailProviderStatus {
   providers: Array<{
-    name: 'RESEND' | 'MAILJET' | 'CUSTOM_SMTP' | 'LOCAL';
+    name: 'RESEND' | 'MAILJET' | 'BREVO';
     priority: number;
     from: string;
   }>;
@@ -1040,8 +1153,8 @@ export async function fetchEmailProviders(): Promise<EmailProviderStatus> {
   return json.data;
 }
 
-export async function fetchEmailNotificationLogs(limit = 50): Promise<EmailNotificationLog[]> {
-  const res = await fetch(`${API_URL}/api/v1/automation/email-logs?limit=${limit}`);
+export async function fetchEmailNotificationLogs(limit = 50, mine = false): Promise<EmailNotificationLog[]> {
+  const res = await fetch(`${API_URL}/api/v1/automation/email-logs?limit=${limit}${mine ? '&mine=true' : ''}`);
   if (!res.ok) throw new Error('Failed to fetch email notification logs');
   const json = await res.json();
   return json.data;
@@ -1144,6 +1257,10 @@ export interface TeamStandupsResponse {
   projectKey: string;
   date: string;
   standups: TeamStandupEntry[];
+  unsubmittedActivity?: Array<{
+    user: { id: string; fullName: string; email: string };
+    completedTasks: StandupTaskItem[];
+  }>;
 }
 
 export async function fetchTodayStandup(projectKey: string = 'CORE'): Promise<TodayStandupResponse> {
@@ -1421,6 +1538,23 @@ export async function deleteProject(key: string): Promise<void> {
   }
 }
 
+export async function updateProjectTeams(
+  key: string,
+  teamIds: string[]
+): Promise<{ teamIds: string[]; teams: Team[] }> {
+  const res = await fetch(`${API_URL}/api/v1/projects/${encodeURIComponent(key)}/teams`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ teamIds }),
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.message || err.error || 'Failed to update project teams');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
 export async function createMilestone(
   key: string,
   data: {
@@ -1598,6 +1732,8 @@ export interface MailProvider {
   name: string;
   priority: number;
   from: string;
+  configured?: boolean;
+  isPrimary?: boolean;
 }
 
 export interface MailLog {
@@ -1616,6 +1752,7 @@ export interface MailLog {
 
 export interface MailStatus {
   providers: MailProvider[];
+  allGateways?: MailProvider[];
   failoverEnabled: boolean;
   primaryProvider: string;
   fallbackProvider: string | null;
@@ -1692,6 +1829,20 @@ export async function fetchMailStatus(): Promise<MailStatus> {
   return json.data;
 }
 
+export async function setMailPrimaryProvider(provider: string): Promise<MailStatus> {
+  const res = await fetch(`${API_URL}/api/v1/mail/provider`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to select mail gateway');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
 export async function fetchMailRecipients(): Promise<MailRecipientDirectory> {
   const res = await fetch(`${API_URL}/api/v1/mail/recipients`);
   if (!res.ok) {
@@ -1750,6 +1901,453 @@ export async function resendMailLog(logId: string): Promise<{ success: boolean; 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || 'Failed to re-dispatch email log');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+// ─── Workspace Chat API ──────────────────────────────────────────────────────
+
+export interface ChatAttachment {
+  name: string;
+  url: string;
+  contentType?: string;
+  size?: number;
+}
+
+export interface ChatChannel {
+  id: string;
+  channelType: 'DIRECT' | 'TEAM' | 'PROJECT';
+  name: string;
+  team?: { id: string; name: string; keyPrefix: string } | null;
+  project?: { id: string; key: string; name: string } | null;
+  peerUser?: { id: string; fullName: string; email: string } | null;
+  unreadCount: number;
+  lastMessage?: {
+    id: string;
+    body: string;
+    senderName: string;
+    createdAt: string;
+  } | null;
+  updatedAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  channelId: string;
+  senderId: string;
+  parentMessageId?: string | null;
+  body: string;
+  attachments: ChatAttachment[];
+  reactions: Record<string, string[]>;
+  editedAt?: string | null;
+  deletedAt?: string | null;
+  createdAt: string;
+  replyCount?: number;
+  sender?: { id: string; fullName: string; email: string } | null;
+}
+
+export async function fetchChatChannels(): Promise<ChatChannel[]> {
+  const res = await fetch(`${API_URL}/api/v1/chat/channels`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch chat channels');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function openDirectMessage(targetUserId: string): Promise<ChatChannel> {
+  const res = await fetch(`${API_URL}/api/v1/chat/dm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetUserId }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to open direct message');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function fetchChatMessages(
+  channelId: string,
+  parentMessageId?: string
+): Promise<ChatMessage[]> {
+  const q = parentMessageId ? `?parentMessageId=${encodeURIComponent(parentMessageId)}` : '';
+  const res = await fetch(`${API_URL}/api/v1/chat/channels/${encodeURIComponent(channelId)}/messages${q}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch messages');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function sendChatMessage(
+  channelId: string,
+  payload: { body: string; parentMessageId?: string | null; attachments?: ChatAttachment[] }
+): Promise<ChatMessage> {
+  const res = await fetch(`${API_URL}/api/v1/chat/channels/${encodeURIComponent(channelId)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to send message');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function editChatMessage(messageId: string, body: string): Promise<ChatMessage> {
+  const res = await fetch(`${API_URL}/api/v1/chat/messages/${encodeURIComponent(messageId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ body }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to edit message');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function deleteChatMessage(messageId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/api/v1/chat/messages/${encodeURIComponent(messageId)}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to delete message');
+  }
+}
+
+export async function toggleChatReaction(
+  messageId: string,
+  emoji: string
+): Promise<{ id: string; reactions: Record<string, string[]> }> {
+  const res = await fetch(`${API_URL}/api/v1/chat/messages/${encodeURIComponent(messageId)}/reactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ emoji }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to toggle reaction');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function markChatChannelRead(channelId: string): Promise<void> {
+  await fetch(`${API_URL}/api/v1/chat/channels/${encodeURIComponent(channelId)}/read`, {
+    method: 'POST',
+  });
+}
+
+export interface ChatSearchMatch extends ChatMessage {
+  channelName: string;
+  channelType: 'DIRECT' | 'TEAM' | 'PROJECT';
+}
+
+export async function searchChatMessages(params: {
+  q: string;
+  channelId?: string;
+  senderId?: string;
+}): Promise<ChatSearchMatch[]> {
+  const query = new URLSearchParams({ q: params.q });
+  if (params.channelId) query.set('channelId', params.channelId);
+  if (params.senderId) query.set('senderId', params.senderId);
+
+  const res = await fetch(`${API_URL}/api/v1/chat/search?${query.toString()}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to search messages');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+// ─── Standalone Helpdesk Portal API ──────────────────────────────────────────
+
+export interface HelpdeskTicket {
+  id: string;
+  ticketKey: string;
+  displayKey?: string;
+  userTicketNumber?: number;
+  ticketNumber: number;
+  category: string;
+  requestType: 'SERVICE_REQUEST' | 'INCIDENT';
+  title: string;
+  description: string;
+  department: string;
+  priority: 'URGENT' | 'HIGH' | 'MEDIUM' | 'LOW';
+  status: 'OPEN' | 'IN_PROGRESS' | 'WAITING_ON_USER' | 'RESOLVED' | 'CLOSED';
+  requesterId: string;
+  assigneeId?: string | null;
+  statusSetByRoleTier?: number;
+  assigneeSetByRoleTier?: number;
+  requester?: { id: string; fullName: string; email: string } | null;
+  assignee?: { id: string; fullName: string; email: string } | null;
+  slaResponseDueAt?: string | null;
+  slaResolutionDueAt?: string | null;
+  isSlaPaused?: boolean;
+  resolvedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface HelpdeskComment {
+  id: string;
+  ticketId: string;
+  authorId: string;
+  body: string;
+  isInternal: boolean;
+  createdAt: string;
+  author?: { id: string; fullName: string; email: string } | null;
+}
+
+export async function fetchHelpdeskTickets(
+  scope: 'mine' | 'all' = 'mine',
+  status?: string
+): Promise<HelpdeskTicket[]> {
+  const q = new URLSearchParams({ scope });
+  if (status && status !== 'ALL') q.set('status', status);
+  const res = await fetch(`${API_URL}/api/v1/helpdesk/tickets?${q.toString()}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch helpdesk tickets');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function createHelpdeskTicket(data: {
+  category: string;
+  requestType: 'SERVICE_REQUEST' | 'INCIDENT';
+  title: string;
+  description: string;
+  department: string;
+  priority: 'URGENT' | 'HIGH' | 'MEDIUM' | 'LOW';
+}): Promise<HelpdeskTicket> {
+  const res = await fetch(`${API_URL}/api/v1/helpdesk/tickets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to submit helpdesk request');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function updateHelpdeskTicket(
+  ticketKey: string,
+  updates: {
+    status?: HelpdeskTicket['status'];
+    priority?: HelpdeskTicket['priority'];
+    assigneeId?: string | null;
+  }
+): Promise<HelpdeskTicket> {
+  const res = await fetch(`${API_URL}/api/v1/helpdesk/tickets/${encodeURIComponent(ticketKey)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to update helpdesk ticket');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function fetchHelpdeskComments(ticketKey: string): Promise<HelpdeskComment[]> {
+  const res = await fetch(`${API_URL}/api/v1/helpdesk/tickets/${encodeURIComponent(ticketKey)}/comments`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch helpdesk comments');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function createHelpdeskComment(
+  ticketKey: string,
+  payload: { body: string; isInternal?: boolean }
+): Promise<HelpdeskComment> {
+  const res = await fetch(`${API_URL}/api/v1/helpdesk/tickets/${encodeURIComponent(ticketKey)}/comments`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to post reply');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export interface ProjectOverviewReport {
+  project: { id: string; key: string; name: string };
+  summary: {
+    totalTickets: number;
+    completedTickets: number;
+    inProgressTickets: number;
+    overdueTickets: number;
+    completionRate: number;
+    slaComplianceRate: number;
+    breachedSlaCount: number;
+  };
+  statusBreakdown: Array<{ status: string; count: number }>;
+  priorityBreakdown: Array<{ priority: string; count: number }>;
+  workloadByAssignee: Array<{
+    userId: string;
+    fullName: string;
+    email: string;
+    total: number;
+    completed: number;
+    inProgress: number;
+    inReview: number;
+    blocked: number;
+    overdue: number;
+    storyPoints: number;
+    slaTracked: number;
+    slaBreached: number;
+    slaComplianceRate: number;
+    tickets: Array<{
+      id: string;
+      ticketKey: string;
+      title: string;
+      status: string;
+      priority: string;
+      storyPoints: number | null;
+      dueDate: string | null;
+      slaResolutionDueAt: string | null;
+      isOverdue: boolean;
+      isSlaBreached: boolean;
+      updatedAt: string;
+    }>;
+  }>;
+  teamBreakdown: Array<{
+    teamId: string;
+    name: string;
+    keyPrefix: string;
+    total: number;
+    completed: number;
+    inProgress: number;
+  }>;
+}
+
+export async function fetchProjectOverviewReport(projectKey: string): Promise<ProjectOverviewReport> {
+  const res = await fetch(`${API_URL}/api/v1/reports/overview?projectKey=${encodeURIComponent(projectKey)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch project overview report');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export interface SummaryTaskItem {
+  id: string;
+  ticketKey: string;
+  title: string;
+  status: string;
+  priority: string;
+  dueDate: string | null;
+  updatedAt: string;
+  assigneeName: string | null;
+  teamName: string | null;
+}
+
+export interface SummaryBlockerItem {
+  id: string;
+  ticketKey: string;
+  title: string;
+  status: string;
+  priority: string;
+  dueDate: string | null;
+  assigneeName: string | null;
+  teamName: string | null;
+  blockerReasons: Array<'EXPLICIT_BLOCKED' | 'DEPENDENCY' | 'OVERDUE'>;
+  blockerDetails: string[];
+}
+
+export interface ProjectSummary {
+  projectId: string;
+  projectKey: string;
+  projectName: string;
+  projectStatus: string;
+  deadline: string | null;
+  generatedAt: string;
+  healthStatus: 'ON_TRACK' | 'AT_RISK' | 'CRITICAL' | 'COMPLETED';
+  headline: string;
+  stats: {
+    totalTasks: number;
+    completedCount: number;
+    inProgressCount: number;
+    plannedCount: number;
+    blockedCount: number;
+    overdueCount: number;
+    dependencyBlockerCount: number;
+    completionPercentage: number;
+  };
+  completed: {
+    totalCount: number;
+    recentCount: number;
+    recentHighlights: SummaryTaskItem[];
+  };
+  blockers: {
+    totalCount: number;
+    explicitBlockedCount: number;
+    dependencyCount: number;
+    overdueCount: number;
+    items: SummaryBlockerItem[];
+  };
+  planned: {
+    inProgressCount: number;
+    todoCount: number;
+    upcomingMilestones: Array<{
+      id: string;
+      title: string;
+      status: string;
+      dueDate: string | null;
+    }>;
+    items: SummaryTaskItem[];
+  };
+  ai: {
+    configured: boolean;
+    narrative: string | null;
+    provider: 'gemini' | 'openai' | null;
+    generatedAt: string | null;
+  };
+}
+
+export async function fetchProjectSummary(projectKey: string): Promise<ProjectSummary> {
+  const res = await fetch(`${API_URL}/api/v1/projects/${encodeURIComponent(projectKey)}/summary`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to fetch project summary');
+  }
+  const json = await res.json();
+  return json.data;
+}
+
+export async function regenerateProjectSummary(projectKey: string): Promise<ProjectSummary> {
+  const res = await fetch(`${API_URL}/api/v1/projects/${encodeURIComponent(projectKey)}/summary/regenerate`, {
+    method: 'POST',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Failed to regenerate project summary');
   }
   const json = await res.json();
   return json.data;

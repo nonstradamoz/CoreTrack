@@ -20,3 +20,4 @@ export * from './schema/index.js';
 export * from 'drizzle-orm';
 export { clearSampleData } from './clean.js';
 export { seed } from './seed.js';
+export { getSeedConfig, type SeedConfig, type UserKey } from './seedConfig.js';

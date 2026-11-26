@@ -21,32 +21,20 @@ export function NotificationsPopover() {
 
   const { data: emailLogs = [] } = useQuery({
     queryKey: ['recentEmailNotificationLogs'],
-    queryFn: () => fetchEmailNotificationLogs(8),
+    queryFn: () => fetchEmailNotificationLogs(15, true),
     refetchInterval: 30000, // poll every 30s
   });
 
-  // Map email logs to notifications
-  const logNotifications: NotificationItem[] = emailLogs.map((log) => ({
+  // Map email logs assigned to current user
+  const notifications: NotificationItem[] = emailLogs.map((log) => ({
     id: log.id,
-    title: log.notificationType.replace('_', ' '),
-    message: `${log.subject} (to: ${log.recipientName || log.recipientEmail})`,
+    title: log.notificationType.replace(/_/g, ' '),
+    message: log.subject,
     type: 'EMAIL',
     timestamp: new Date(log.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     read: dismissedIds.includes(log.id),
   }));
 
-  const staticFallback: NotificationItem[] = [
-    {
-      id: 'sla-1',
-      title: 'Automated Deadline Scanner Active',
-      message: 'Hourly SLA and deadline background daemon is running.',
-      type: 'SLA',
-      timestamp: 'Active',
-      read: dismissedIds.includes('sla-1'),
-    },
-  ];
-
-  const notifications = logNotifications.length > 0 ? logNotifications : staticFallback;
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   const markAllRead = () => {

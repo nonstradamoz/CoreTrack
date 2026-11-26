@@ -5,6 +5,7 @@ import {
   db,
   tickets,
   projects,
+  projectTeams,
   sprints,
   ticketComments,
   ticketDependencies,
@@ -34,7 +35,7 @@ import {
   hasPermission,
 } from '@coretrack/shared';
 import { broadcastToProject } from '../ws.js';
-import { getCurrentUser, getUserRoleTier, getEffectiveUserPermissions } from '../auth/auth.js';
+import { getCurrentUser, getUserRoleTier, getEffectiveUserPermissions, getUserTeamIds } from '../auth/auth.js';
 import {
   getPresignedUploadUrl,
   getPresignedDownloadUrl,
@@ -76,6 +77,35 @@ async function wouldCreateCycle(sourceId: string, targetId: string): Promise<boo
   return false;
 }
 
+function attachDisplayKeys<
+  T extends { id: string; projectId: string; ticketKey: string; ticketNumber: number; createdAt: Date | string }
+>(items: T[], fallbackProjectKey?: string): (T & { displayKey: string; userTicketNumber: number })[] {
+  const byProject = new Map<string, T[]>();
+  for (const item of items) {
+    const list = byProject.get(item.projectId) || [];
+    list.push(item);
+    byProject.set(item.projectId, list);
+  }
+
+  const assigned = new Map<string, { displayKey: string; userTicketNumber: number }>();
+  for (const list of byProject.values()) {
+    const sorted = [...list].sort((a, b) => {
+      const timeDiff = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+      return timeDiff !== 0 ? timeDiff : a.ticketNumber - b.ticketNumber;
+    });
+    sorted.forEach((item, idx) => {
+      const prefix = fallbackProjectKey || item.ticketKey.split('-')[0] || 'TASK';
+      const num = idx + 1;
+      assigned.set(item.id, { displayKey: `${prefix}-${num}`, userTicketNumber: num });
+    });
+  }
+
+  return items.map((item) => ({
+    ...item,
+    ...(assigned.get(item.id) || { displayKey: item.ticketKey, userTicketNumber: item.ticketNumber }),
+  }));
+}
+
 export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -97,11 +127,16 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
       const { projectId, projectKey, limit } = request.query;
 
       let targetProjectId = projectId;
+      let targetProject = null;
       if (!targetProjectId && projectKey) {
-        const proj = await db.query.projects.findFirst({
+        targetProject = await db.query.projects.findFirst({
           where: eq(projects.key, projectKey),
         });
-        targetProjectId = proj?.id;
+        targetProjectId = targetProject?.id;
+      } else if (targetProjectId) {
+        targetProject = await db.query.projects.findFirst({
+          where: eq(projects.id, targetProjectId),
+        });
       }
 
       const results = await db.query.tickets.findMany({
@@ -110,10 +145,33 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         limit,
         with: {
           assignee: true,
+          team: {
+            columns: {
+              id: true,
+              name: true,
+              keyPrefix: true,
+            },
+          },
         },
       });
 
-      return reply.send({ data: results });
+      // Team task isolation: non-manager/non-admin users only see their own team(s)' tasks (or untagged tasks)
+      const caller = await getCurrentUser(request);
+      if (caller) {
+        const callerTierInfo = await getUserRoleTier(caller.id, targetProject?.key || projectKey);
+        const isProjectAuthority =
+          callerTierInfo.tier >= 3 ||
+          (targetProject &&
+            (targetProject.projectManagerId === caller.id || targetProject.reviewerId === caller.id));
+
+        if (!isProjectAuthority) {
+          const userTeamIds = await getUserTeamIds(caller.id);
+          const filtered = results.filter((t) => !t.teamId || userTeamIds.includes(t.teamId));
+          return reply.send({ data: attachDisplayKeys(filtered, targetProject?.key || projectKey) });
+        }
+      }
+
+      return reply.send({ data: attachDisplayKeys(results, targetProject?.key || projectKey) });
     }
   );
 
@@ -136,11 +194,45 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         with: {
           reporter: true,
           assignee: true,
+          team: {
+            columns: {
+              id: true,
+              name: true,
+              keyPrefix: true,
+            },
+          },
+          project: {
+            columns: {
+              id: true,
+              key: true,
+              projectManagerId: true,
+              reviewerId: true,
+            },
+          },
         },
       });
 
       if (!ticket) {
         return reply.status(404).send({ error: 'Ticket not found' });
+      }
+
+      if (ticket.teamId) {
+        const caller = await getCurrentUser(request);
+        if (caller) {
+          const callerTierInfo = await getUserRoleTier(caller.id, ticket.project?.key);
+          const isProjectAuthority =
+            callerTierInfo.tier >= 3 ||
+            ticket.project?.projectManagerId === caller.id ||
+            ticket.project?.reviewerId === caller.id;
+          if (!isProjectAuthority) {
+            const userTeamIds = await getUserTeamIds(caller.id);
+            if (!userTeamIds.includes(ticket.teamId)) {
+              return reply.status(403).send({
+                error: 'Access Denied: This task belongs to another team.',
+              });
+            }
+          }
+        }
       }
 
       return reply.send({ data: ticket });
@@ -198,10 +290,39 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         ? await getUserRoleTier(user.id, projectKey)
         : { tier: 5, roleName: 'Super Admin' };
 
+      // Resolve teamId for team-scoped task isolation
+      let resolvedTeamId: string | null = input.teamId ?? null;
+      if (user) {
+        const userTeamIds = await getUserTeamIds(user.id);
+        const isProjectAuthority =
+          callerTierInfo.tier >= 3 ||
+          projectRecord?.projectManagerId === user.id ||
+          projectRecord?.reviewerId === user.id;
+
+        if (resolvedTeamId) {
+          if (!isProjectAuthority && !userTeamIds.includes(resolvedTeamId)) {
+            return reply.status(403).send({
+              error: 'Access Denied: You cannot create tasks for another team.',
+            });
+          }
+        } else if (!isProjectAuthority && userTeamIds.length > 0) {
+          // Auto-scope task to the creator's team on this project
+          const projTeams = await db
+            .select({ teamId: projectTeams.teamId })
+            .from(projectTeams)
+            .where(eq(projectTeams.projectId, input.projectId));
+          const projTeamSet = new Set(projTeams.map((pt) => pt.teamId));
+          if (projectRecord?.primaryTeamId) projTeamSet.add(projectRecord.primaryTeamId);
+          const matchingTeam = userTeamIds.find((tid) => projTeamSet.has(tid));
+          resolvedTeamId = matchingTeam || userTeamIds[0];
+        }
+      }
+
       const [newTicket] = await db
         .insert(tickets)
         .values({
           projectId: input.projectId,
+          teamId: resolvedTeamId,
           ticketKey,
           ticketNumber: nextNum,
           ticketType: input.ticketType,
@@ -233,6 +354,13 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         with: {
           reporter: true,
           assignee: true,
+          team: {
+            columns: {
+              id: true,
+              name: true,
+              keyPrefix: true,
+            },
+          },
         },
       })) || newTicket;
 
@@ -342,6 +470,51 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         ? await getUserRoleTier(user.id, projectKey)
         : { tier: 5, roleName: 'Super Admin' };
 
+      // Assignment Authority & Task Editing Guard:
+      // Regular employees (Tier 1) can only edit, change status, priority, or deadline on tasks assigned to themselves.
+      if (callerTierInfo.tier < 2) {
+        if (!user) {
+          return reply.status(401).send({ error: 'Authentication required' });
+        }
+
+        // Case 1: Task is assigned to someone else
+        if (existing.assigneeId && existing.assigneeId !== user.id) {
+          return reply.status(403).send({
+            type: 'https://errors.coretrack.internal/forbidden',
+            title: 'Task Editing Prohibited',
+            status: 403,
+            error: 'ASSIGNED_PERSON_ONLY',
+            message: 'Access Denied: You cannot edit tasks assigned to others. Only the assigned person or higher authorities can edit or update status, priority, or deadline.',
+          });
+        }
+
+        // Case 2: Task is unassigned - employee can only update if they are the reporter or self-assigning
+        if (!existing.assigneeId) {
+          const isSelfAssigning = updates.assigneeId === user.id;
+          const isReporter = existing.reporterId === user.id;
+          if (!isSelfAssigning && !isReporter) {
+            return reply.status(403).send({
+              type: 'https://errors.coretrack.internal/forbidden',
+              title: 'Task Editing Prohibited',
+              status: 403,
+              error: 'ASSIGNED_PERSON_ONLY',
+              message: 'Access Denied: Unassigned tasks can only be edited by their creator, higher authorities, or by claiming/assigning the task to yourself.',
+            });
+          }
+        }
+
+        // Case 3: Employee cannot reassign tasks to other users
+        if (updates.assigneeId !== undefined && updates.assigneeId !== null && updates.assigneeId !== user.id) {
+          return reply.status(403).send({
+            type: 'https://errors.coretrack.internal/forbidden',
+            title: 'Reassignment Prohibited',
+            status: 403,
+            error: 'REASSIGNMENT_PROHIBITED',
+            message: 'Access Denied: Employees cannot reassign tasks to other members. Only higher authorities can assign tasks to others.',
+          });
+        }
+      }
+
       // Immutable Deadline Policy:
       // If user is attempting to modify or clear an existing deadline that was set by a higher authority:
       if (updates.dueDate !== undefined && existing.dueDate) {
@@ -390,6 +563,26 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      // Recalculate SLA targets when priority changes (unless explicit SLA dates were provided)
+      let recalculatedSlaResponseDueAt: Date | null | undefined =
+        updates.slaResponseDueAt ? new Date(updates.slaResponseDueAt) : updates.slaResponseDueAt === null ? null : undefined;
+      let recalculatedSlaResolutionDueAt: Date | null | undefined =
+        updates.slaResolutionDueAt ? new Date(updates.slaResolutionDueAt) : updates.slaResolutionDueAt === null ? null : undefined;
+
+      if (
+        updates.priority &&
+        updates.priority !== existing.priority &&
+        updates.slaResponseDueAt === undefined &&
+        updates.slaResolutionDueAt === undefined
+      ) {
+        const recalculated = calculateSLADueDates(
+          updates.priority as 'URGENT' | 'HIGH' | 'MEDIUM' | 'LOW',
+          existing.createdAt
+        );
+        recalculatedSlaResponseDueAt = recalculated.responseDueAt;
+        recalculatedSlaResolutionDueAt = recalculated.resolutionDueAt;
+      }
+
       const updateValues: Record<string, unknown> = {
         ...updates,
         spentHours: updates.spentHours !== undefined ? updates.spentHours.toString() : undefined,
@@ -398,8 +591,8 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         dueDateSetByRoleTier: computedDueDate ? callerTierInfo.tier : undefined,
         assignedByUserId: computedAssignedByUserId,
         assignedByRoleTier: computedAssignedByRoleTier,
-        slaResponseDueAt: updates.slaResponseDueAt ? new Date(updates.slaResponseDueAt) : updates.slaResponseDueAt === null ? null : undefined,
-        slaResolutionDueAt: updates.slaResolutionDueAt ? new Date(updates.slaResolutionDueAt) : updates.slaResolutionDueAt === null ? null : undefined,
+        slaResponseDueAt: recalculatedSlaResponseDueAt,
+        slaResolutionDueAt: recalculatedSlaResolutionDueAt,
         isSlaPaused: isSlaPaused !== undefined ? isSlaPaused : undefined,
         lockVersion: existing.lockVersion + 1,
         updatedAt: new Date(),
@@ -600,6 +793,39 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
 
       const user = await getCurrentUser(request);
       const callerTierInfo = user ? await getUserRoleTier(user.id) : { tier: 5, roleName: 'Super Admin' };
+
+      // Assignment Authority Guard for Bulk Operations:
+      // Employees (Tier 1) can only update tasks assigned to themselves
+      if (callerTierInfo.tier < 2) {
+        if (!user) {
+          return reply.status(401).send({ error: 'Authentication required' });
+        }
+
+        const targetTickets = await db.query.tickets.findMany({
+          where: inArray(tickets.ticketKey, ticketKeys),
+        });
+
+        const unauthorizedTickets = targetTickets.filter((t) => t.assigneeId !== user.id);
+        if (unauthorizedTickets.length > 0) {
+          return reply.status(403).send({
+            type: 'https://errors.coretrack.internal/forbidden',
+            title: 'Bulk Update Prohibited',
+            status: 403,
+            error: 'ASSIGNED_PERSON_ONLY',
+            message: `Access Denied: You cannot modify tasks assigned to others (${unauthorizedTickets.map((t) => t.ticketKey).join(', ')}). Only the assigned person or higher authorities can update tasks.`,
+          });
+        }
+
+        if (assigneeId !== undefined && assigneeId !== user.id) {
+          return reply.status(403).send({
+            type: 'https://errors.coretrack.internal/forbidden',
+            title: 'Reassignment Prohibited',
+            status: 403,
+            error: 'REASSIGNMENT_PROHIBITED',
+            message: 'Access Denied: Employees cannot reassign tasks to other members.',
+          });
+        }
+      }
 
       const updateData: Record<string, unknown> = {
         updatedAt: new Date(),

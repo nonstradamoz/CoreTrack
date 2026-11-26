@@ -23,6 +23,8 @@ import { standupRoutes } from './routes/standups.js';
 import { roleRoutes } from './routes/roles.js';
 import { teamRoutes } from './routes/teams.js';
 import { mailRoutes } from './routes/mail.js';
+import { chatRoutes } from './routes/chat.js';
+import { helpdeskRoutes } from './routes/helpdesk.js';
 import { db, departments } from '@coretrack/db';
 import { registerClient } from './ws.js';
 import { WebSocket } from 'ws';
@@ -100,6 +102,8 @@ export async function buildApp() {
   await app.register(roleRoutes, { prefix: '/api/v1' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
   await app.register(mailRoutes, { prefix: '/api/v1/mail' });
+  await app.register(chatRoutes, { prefix: '/api/v1/chat' });
+  await app.register(helpdeskRoutes, { prefix: '/api/v1/helpdesk' });
 
   app.get('/api/v1/departments', async (_request, reply) => {
     const all = await db.query.departments.findMany();

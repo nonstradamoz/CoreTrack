@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useProject } from '../../context/ProjectContext';
 import { fetchTickets, fetchCurrentUser, updateTicket, Ticket } from '../../lib/api';
+import { usePermissions } from '../../hooks/usePermissions';
 import {
   Calendar,
   Clock,
@@ -16,6 +17,7 @@ import {
   Sparkles,
   Inbox,
   AlertCircle,
+  Lock,
 } from 'lucide-react';
 
 interface ContextualRightPanelProps {
@@ -40,6 +42,7 @@ export function ContextualRightPanel({
     queryKey: ['currentUser'],
     queryFn: fetchCurrentUser,
   });
+  const { user, roleTier } = usePermissions();
 
   const projectKey = activeProject?.key || 'CORE';
 
@@ -285,24 +288,43 @@ export function ContextualRightPanel({
                     </div>
 
                     {/* Right Checkbox / Completion Circle matching reference */}
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleStatusMutation.mutate({
-                          ticketKey: t.ticketKey,
-                          newStatus: isClosed ? 'TODO' : 'DONE',
-                          lockVersion: t.lockVersion,
-                        });
-                      }}
-                      title={isClosed ? 'Mark as open' : 'Mark as complete'}
-                      className={`h-6 w-6 rounded-full shrink-0 flex items-center justify-center transition cursor-pointer ${
-                        isClosed
-                          ? 'bg-blue-600 text-white shadow-xs'
-                          : 'border-2 border-slate-300 dark:border-slate-600 hover:border-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800'
-                      }`}
-                    >
-                      {isClosed && <Check className="h-3.5 w-3.5 stroke-[2.5]" />}
-                    </button>
+                    {(() => {
+                      const isAssignedToCurrentUser = Boolean(user?.id && t.assigneeId === user.id);
+                      const isHigherAuthority = roleTier >= 2;
+                      const canToggleThisTask = isHigherAuthority || isAssignedToCurrentUser || (!t.assigneeId && t.reporterId === user?.id);
+
+                      if (!canToggleThisTask) {
+                        return (
+                          <div
+                            title={`Assigned to ${t.assignee?.fullName || 'another member'}. Only assigned person can update status.`}
+                            className="h-6 w-6 rounded-full shrink-0 flex items-center justify-center border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed"
+                          >
+                            <Lock className="h-2.5 w-2.5" />
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleStatusMutation.mutate({
+                              ticketKey: t.ticketKey,
+                              newStatus: isClosed ? 'TODO' : 'DONE',
+                              lockVersion: t.lockVersion,
+                            });
+                          }}
+                          title={isClosed ? 'Mark as open' : 'Mark as complete'}
+                          className={`h-6 w-6 rounded-full shrink-0 flex items-center justify-center transition cursor-pointer ${
+                            isClosed
+                              ? 'bg-blue-600 text-white shadow-xs'
+                              : 'border-2 border-slate-300 dark:border-slate-600 hover:border-blue-600 hover:bg-blue-50 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          {isClosed && <Check className="h-3.5 w-3.5 stroke-[2.5]" />}
+                        </button>
+                      );
+                    })()}
                   </div>
                 );
               })

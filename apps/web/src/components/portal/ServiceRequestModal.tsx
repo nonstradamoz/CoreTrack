@@ -3,33 +3,31 @@
 import React, { useState } from 'react';
 import { X, Send, AlertCircle, ShieldCheck } from 'lucide-react';
 import { CatalogItem } from './ServiceCatalogGrid';
-import { Ticket } from '../../lib/api';
+import { HelpdeskTicket } from '../../lib/api';
 
 interface ServiceRequestModalProps {
   item: CatalogItem | null;
-  projectId: string;
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: {
-    projectId: string;
+    category: string;
+    requestType: 'SERVICE_REQUEST' | 'INCIDENT';
     title: string;
     description: string;
-    ticketType: Ticket['ticketType'];
-    priority: Ticket['priority'];
-    status: Ticket['status'];
+    department: string;
+    priority: HelpdeskTicket['priority'];
   }) => Promise<void>;
 }
 
 export function ServiceRequestModal({
   item,
-  projectId,
   isOpen,
   onClose,
   onSubmit,
 }: ServiceRequestModalProps) {
   const [title, setTitle] = useState('');
   const [details, setDetails] = useState('');
-  const [priority, setPriority] = useState<Ticket['priority']>('MEDIUM');
+  const [priority, setPriority] = useState<HelpdeskTicket['priority']>('MEDIUM');
   const [department, setDepartment] = useState('Engineering');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,15 +55,13 @@ export function ServiceRequestModal({
       setIsSubmitting(true);
       setError(null);
 
-      const formattedDescription = `**Category:** ${item?.title}\n**Department:** ${department}\n\n**Details & Justification:**\n${details.trim() || 'No additional details provided.'}`;
-
       await onSubmit({
-        projectId,
+        category: item.title,
+        requestType: item.ticketType === 'INCIDENT' ? 'INCIDENT' : 'SERVICE_REQUEST',
         title: title.trim(),
-        description: formattedDescription,
-        ticketType: item.ticketType,
+        description: details.trim() || 'No additional details provided.',
+        department,
         priority,
-        status: item.ticketType === 'INCIDENT' ? 'TODO' : 'PENDING_APPROVAL',
       });
 
       onClose();
@@ -148,7 +144,7 @@ export function ServiceRequestModal({
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Urgency / Impact</label>
               <select
                 value={priority}
-                onChange={(e) => setPriority(e.target.value as Ticket['priority'])}
+                onChange={(e) => setPriority(e.target.value as HelpdeskTicket['priority'])}
                 className="w-full px-2.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
               >
                 <option value="LOW">Low (Can wait several days)</option>

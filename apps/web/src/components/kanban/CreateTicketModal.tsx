@@ -1,17 +1,19 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, Plus, AlertCircle, User, Calendar, Sparkles } from 'lucide-react';
-import { Ticket, UserPersona, fetchAvailableUsers } from '../../lib/api';
+import { X, Plus, AlertCircle, User, Calendar, Sparkles, Users } from 'lucide-react';
+import { Ticket, UserPersona, Team, fetchAvailableUsers, fetchTeams, fetchProjects, fetchCurrentUser } from '../../lib/api';
 import { usePermissions } from '../../hooks/usePermissions';
 import { Permissions } from '../../lib/permissions';
 
 interface CreateTicketModalProps {
   projectId: string;
+  defaultTeamId?: string;
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: {
     projectId: string;
+    teamId?: string;
     title: string;
     description: string;
     ticketType: Ticket['ticketType'];
@@ -25,11 +27,12 @@ interface CreateTicketModalProps {
 
 export function CreateTicketModal({
   projectId,
+  defaultTeamId,
   isOpen,
   onClose,
   onSubmit,
 }: CreateTicketModalProps) {
-  const { hasPermission } = usePermissions();
+  const { hasPermission, roleTier } = usePermissions();
   const canCreateTask = hasPermission(Permissions.TICKET_CREATE);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -38,18 +41,42 @@ export function CreateTicketModal({
   const [status, setStatus] = useState<Ticket['status']>('TODO');
   const [storyPoints, setStoryPoints] = useState<number | ''>(3);
   const [assigneeId, setAssigneeId] = useState('');
+  const [teamId, setTeamId] = useState(defaultTeamId || '');
   const [dueDate, setDueDate] = useState('');
   const [availableUsers, setAvailableUsers] = useState<UserPersona[]>([]);
+  const [projectTeamsList, setProjectTeamsList] = useState<Team[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      if (defaultTeamId) setTeamId(defaultTeamId);
       fetchAvailableUsers()
         .then((users) => setAvailableUsers(users))
         .catch(() => setAvailableUsers([]));
+
+      Promise.all([fetchTeams(), fetchProjects(), fetchCurrentUser().catch(() => null)])
+        .then(([allTeams, allProjects, currentUser]) => {
+          const activeProj = allProjects.find((p) => p.id === projectId);
+          const assignedIds = new Set((activeProj?.assignedTeams || []).map((t) => t.id));
+          let scoped = assignedIds.size > 0
+            ? allTeams.filter((t) => assignedIds.has(t.id))
+            : allTeams;
+
+          if (roleTier < 3 && currentUser) {
+            const myTeams = scoped.filter(
+              (t) => t.leadId === currentUser.id || t.members.some((m) => m.userId === currentUser.id)
+            );
+            if (myTeams.length > 0) {
+              scoped = myTeams;
+              if (!defaultTeamId) setTeamId(myTeams[0].id);
+            }
+          }
+          setProjectTeamsList(scoped);
+        })
+        .catch(() => setProjectTeamsList([]));
     }
-  }, [isOpen]);
+  }, [isOpen, projectId, defaultTeamId, roleTier]);
 
   if (!isOpen) return null;
 
@@ -81,6 +108,7 @@ export function CreateTicketModal({
       setError(null);
       await onSubmit({
         projectId,
+        teamId: teamId || undefined,
         title: title.trim(),
         description: description.trim(),
         ticketType,
@@ -199,8 +227,28 @@ export function CreateTicketModal({
             </div>
           </div>
 
-          {/* Assignee & Deadline Policy Section */}
+          {/* Assignee, Team & Deadline Policy Section */}
           <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 space-y-3">
+            {projectTeamsList.length > 0 && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5">
+                  <Users className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                  Assigned Team
+                </label>
+                <select
+                  value={teamId}
+                  onChange={(e) => setTeamId(e.target.value)}
+                  className="w-full px-2.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-medium text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 shadow-2xs"
+                >
+                  {roleTier >= 3 && <option value="">General / All Teams</option>}
+                  {projectTeamsList.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name} ({t.keyPrefix})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1 flex items-center gap-1.5">

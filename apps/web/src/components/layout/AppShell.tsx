@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useProject } from '../../context/ProjectContext';
-import { fetchTickets, fetchCurrentUser, createTicket, Ticket } from '../../lib/api';
+import { fetchTickets, fetchCurrentUser, createTicket, fetchChatChannels, Ticket } from '../../lib/api';
+import { ChatWorkspace } from '../chat/ChatWorkspace';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { NotificationsPopover } from '../notifications/NotificationsPopover';
 import { Logo } from '../brand/Logo';
@@ -16,6 +17,7 @@ import { CreateTicketModal } from '../kanban/CreateTicketModal';
 import { CreateProjectModal } from '../projects/CreateProjectModal';
 import { TicketDetailModal } from '../kanban/TicketDetailModal';
 import { DailyStatusDrawer } from '../standup/DailyStatusDrawer';
+import { ForcePasswordChangeModal } from '../auth/ForcePasswordChangeModal';
 import { ContextualRightPanel } from './ContextualRightPanel';
 import { useModuleAccess } from '../../hooks/useModuleAccess';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -51,6 +53,7 @@ import {
   Calendar,
   Settings,
   Mail,
+  MessageCircle,
 } from 'lucide-react';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -60,6 +63,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
+  return <AuthenticatedAppShell>{children}</AuthenticatedAppShell>;
+}
+
+function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const queryClient = useQueryClient();
   const { projects, selectedProjectKey, setSelectedProjectKey, activeProject } = useProject();
   const { theme, toggleTheme } = useTheme();
@@ -75,6 +83,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
   const [isDailyStatusDrawerOpen, setIsDailyStatusDrawerOpen] = useState(false);
+  const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
 
   // Live Digital Clock state matching reference: "20:12:44", "Wednesday, 11 May"
@@ -98,10 +107,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   }, []);
 
-  const { data: currentUser } = useQuery({
+  const { data: currentUser, isError: isAuthError } = useQuery({
     queryKey: ['currentUser'],
     queryFn: fetchCurrentUser,
+    retry: false,
   });
+
+  const router = useRouter();
+  useEffect(() => {
+    if (isAuthError && pathname !== '/login') {
+      router.replace('/login');
+    }
+  }, [isAuthError, pathname, router]);
 
   const initials = currentUser?.fullName
     ? currentUser.fullName
@@ -112,33 +129,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     : 'U';
 
   // Active navigation derived from current URL
-  const activeNav = pathname.startsWith('/dashboard')
-    ? 'DASHBOARD'
-    : pathname.startsWith('/projects')
-      ? 'PROJECTS'
-      : pathname.startsWith('/teams')
-        ? 'TEAMS'
-        : pathname.startsWith('/backlog')
-          ? 'BACKLOG'
-          : pathname.startsWith('/timeline')
-            ? 'TIMELINE'
-            : pathname.startsWith('/table')
-              ? 'TABLE'
-              : pathname.startsWith('/reports')
-                ? 'REPORTS'
-                : pathname.startsWith('/automation')
-                  ? 'AUTOMATION'
-                  : pathname.startsWith('/mail')
-                    ? 'MAIL'
-                    : pathname.startsWith('/settings/users')
-                      ? 'USERS'
-                      : pathname.startsWith('/settings/roles')
-                        ? 'ROLES'
-                    : pathname.startsWith('/portal')
-                      ? 'PORTAL'
-                      : pathname === '/'
-                        ? 'BOARD'
-                        : '';
+  const activeNav = pathname.startsWith('/chat')
+    ? 'CHAT'
+    : pathname.startsWith('/dashboard')
+      ? 'DASHBOARD'
+      : pathname.startsWith('/projects')
+        ? 'PROJECTS'
+        : pathname.startsWith('/teams')
+          ? 'TEAMS'
+          : pathname.startsWith('/backlog')
+            ? 'BACKLOG'
+            : pathname.startsWith('/timeline')
+              ? 'TIMELINE'
+              : pathname.startsWith('/table')
+                ? 'TABLE'
+                : pathname.startsWith('/reports')
+                  ? 'REPORTS'
+                  : pathname.startsWith('/automation')
+                    ? 'AUTOMATION'
+                    : pathname.startsWith('/mail')
+                      ? 'MAIL'
+                      : pathname.startsWith('/settings/users')
+                        ? 'USERS'
+                        : pathname.startsWith('/settings/roles')
+                          ? 'ROLES'
+                          : pathname.startsWith('/portal')
+                            ? 'PORTAL'
+                            : pathname === '/'
+                              ? 'BOARD'
+                              : '';
 
   // Persist sidebar collapsed & right panel preferences
   useEffect(() => {
@@ -188,6 +207,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     queryFn: () => fetchTickets(activeProject?.key || 'CORE'),
     enabled: !!activeProject,
   });
+
+  // Fetch chat channels for global unread badge
+  const { data: chatChannels = [] } = useQuery({
+    queryKey: ['chatChannels'],
+    queryFn: fetchChatChannels,
+    refetchInterval: 20000,
+  });
+  const totalChatUnread = chatChannels.reduce((acc, c) => acc + (c.unreadCount || 0), 0);
 
   const createTicketMutation = useMutation({
     mutationFn: createTicket,
@@ -323,6 +350,26 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 {!isCollapsed && <span>Teams</span>}
               </Link>
 
+              {/* Workspace Chat */}
+              <Link
+                href="/chat"
+                title="Workspace Chat"
+                className={`flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${activeNav === 'CHAT'
+                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 shadow-2xs'
+                  : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <MessageCircle className={`h-4 w-4 shrink-0 ${activeNav === 'CHAT' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`} />
+                  {!isCollapsed && <span>Chat</span>}
+                </div>
+                {!isCollapsed && totalChatUnread > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                    {totalChatUnread}
+                  </span>
+                )}
+              </Link>
+
               {/* Today's Task standup — all roles */}
               <button
                 type="button"
@@ -421,6 +468,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 >
                   <Mail className={`h-4 w-4 shrink-0 ${activeNav === 'MAIL' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`} />
                   {!isCollapsed && <span>Mailing</span>}
+                </Link>
+              )}
+
+              {/* ITSM Service Portal */}
+              {canAccess('portal') && (
+                <Link
+                  href="/portal"
+                  title="Service Portal"
+                  className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold transition ${activeNav === 'PORTAL'
+                    ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 shadow-2xs'
+                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800'
+                    }`}
+                >
+                  <LifeBuoy className={`h-4 w-4 shrink-0 ${activeNav === 'PORTAL' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`} />
+                  {!isCollapsed && <span>Helpdesk Portal</span>}
                 </Link>
               )}
             </div>
@@ -593,13 +655,27 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </span>
             </div>
 
-            {/* Standup Drawer / Message bubble button */}
+            {/* Quick Workspace Chat Drawer Toggle */}
+            <button
+              onClick={() => setIsChatDrawerOpen(true)}
+              title="Quick Chat"
+              className="relative p-2 rounded-full border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-blue-600 transition shadow-2xs cursor-pointer"
+            >
+              <MessageCircle className="h-4 w-4" />
+              {totalChatUnread > 0 && (
+                <span className="absolute -top-1 -right-1 h-4 min-w-[16px] px-1 rounded-full bg-blue-600 text-white text-[9px] font-bold flex items-center justify-center">
+                  {totalChatUnread}
+                </span>
+              )}
+            </button>
+
+            {/* Standup Drawer button */}
             <button
               onClick={() => setIsDailyStatusDrawerOpen(true)}
               title="Daily Standup (Cmd+D)"
               className="p-2 rounded-full border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-blue-600 transition shadow-2xs cursor-pointer"
             >
-              <MessageSquare className="h-4 w-4" />
+              <CalendarCheck2 className="h-4 w-4" />
             </button>
 
             {/* Notifications Popover */}
@@ -766,6 +842,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   <span>Mailing</span>
                 </Link>
               )}
+              {canAccess('portal') && (
+                <Link
+                  href="/portal"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold ${activeNav === 'PORTAL'
+                    ? 'bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400'
+                    : 'text-slate-700 dark:text-slate-300'
+                    }`}
+                >
+                  <LifeBuoy className="h-4 w-4" />
+                  <span>Portal</span>
+                </Link>
+              )}
               {canAccessSettings() && (
                 <Link
                   href="/settings/users"
@@ -840,6 +929,43 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         isOpen={isDailyStatusDrawerOpen}
         onClose={() => setIsDailyStatusDrawerOpen(false)}
       />
+
+      {/* First Sign-In Forced Password Change Modal */}
+      {currentUser?.mustChangePassword && (
+        <ForcePasswordChangeModal userEmail={currentUser.email} />
+      )}
+
+      {/* Global Slide-Over Quick Chat Drawer */}
+      {isChatDrawerOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/40 backdrop-blur-xs">
+          <div className="w-full max-w-3xl h-full bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col">
+            <div className="px-4 py-2.5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-slate-100">
+                <MessageCircle className="h-4 w-4 text-blue-600" />
+                <span>Quick Chat</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Link
+                  href="/chat"
+                  onClick={() => setIsChatDrawerOpen(false)}
+                  className="text-[11px] font-semibold text-blue-600 hover:underline"
+                >
+                  Open Full Page →
+                </Link>
+                <button
+                  onClick={() => setIsChatDrawerOpen(false)}
+                  className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0">
+              <ChatWorkspace compact />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -13,6 +13,7 @@ import {
   projectMilestones,
   projectActivityLogs,
   projectMembers,
+  projectTeams,
   roles,
   users,
   teams,
@@ -23,9 +24,10 @@ import {
   or,
   inArray,
 } from '@coretrack/db';
-import { getCurrentUser, getUserRoleTier, getEffectiveUserPermissions } from '../auth/auth.js';
+import { getCurrentUser, getUserRoleTier, getEffectiveUserPermissions, getUserTeamIds } from '../auth/auth.js';
 import { Permissions, hasPermission } from '@coretrack/shared';
 import { sendProjectAssignedNotification } from '../services/email.js';
+import { getProjectSummary, RateLimitError } from '../services/projectSummariser.js';
 
 export const projectRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -154,6 +156,21 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
               },
             },
           },
+          assignedTeams: {
+            with: {
+              team: {
+                with: {
+                  lead: {
+                    columns: {
+                      id: true,
+                      fullName: true,
+                      email: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
           projectManager: {
             columns: {
               id: true,
@@ -202,6 +219,13 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
 
         return {
           ...p,
+          assignedTeams: (() => {
+            const list = p.assignedTeams.map((at) => at.team);
+            if (p.primaryTeam && !list.some((t) => t.id === p.primaryTeam!.id)) {
+              list.unshift(p.primaryTeam);
+            }
+            return list;
+          })(),
           totalTicketsCount,
           completedTicketsCount,
           progressPercentage,
@@ -250,6 +274,32 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
                       id: true,
                       fullName: true,
                       email: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          assignedTeams: {
+            with: {
+              team: {
+                with: {
+                  lead: {
+                    columns: {
+                      id: true,
+                      fullName: true,
+                      email: true,
+                    },
+                  },
+                  members: {
+                    with: {
+                      user: {
+                        columns: {
+                          id: true,
+                          fullName: true,
+                          email: true,
+                        },
+                      },
                     },
                   },
                 },
@@ -306,7 +356,17 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
               status: true,
               priority: true,
               assigneeId: true,
+              teamId: true,
               dueDate: true,
+            },
+            with: {
+              team: {
+                columns: {
+                  id: true,
+                  name: true,
+                  keyPrefix: true,
+                },
+              },
             },
           },
         },
@@ -316,8 +376,32 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'Project not found' });
       }
 
-      const totalTicketsCount = project.tickets.length;
-      const completedTicketsCount = project.tickets.filter((t) =>
+      // Build unified assignedTeams list (M2M projectTeams + backwards-compat primaryTeam)
+      const resolvedAssignedTeams = project.assignedTeams.map((at) => at.team);
+      if (project.primaryTeam && !resolvedAssignedTeams.some((t) => t.id === project.primaryTeam!.id)) {
+        resolvedAssignedTeams.unshift(project.primaryTeam);
+      }
+
+      // Team task isolation: non-manager/non-admin users only see their own team(s)' tasks (or untagged tasks)
+      let visibleTickets = project.tickets;
+      const caller = await getCurrentUser(request);
+      if (caller) {
+        const callerTierInfo = await getUserRoleTier(caller.id, key);
+        const isProjectAuthority =
+          callerTierInfo.tier >= 3 ||
+          project.projectManagerId === caller.id ||
+          project.reviewerId === caller.id;
+
+        if (!isProjectAuthority) {
+          const userTeamIds = await getUserTeamIds(caller.id);
+          visibleTickets = project.tickets.filter(
+            (t) => !t.teamId || userTeamIds.includes(t.teamId)
+          );
+        }
+      }
+
+      const totalTicketsCount = visibleTickets.length;
+      const completedTicketsCount = visibleTickets.filter((t) =>
         ['DONE', 'RESOLVED', 'CLOSED'].includes(t.status.toUpperCase())
       ).length;
       const progressPercentage =
@@ -333,7 +417,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         BLOCKED: 0,
       };
 
-      for (const t of project.tickets) {
+      for (const t of visibleTickets) {
         const s = t.status.toUpperCase();
         if (ticketStatusBreakdown[s] !== undefined) {
           ticketStatusBreakdown[s]++;
@@ -345,6 +429,8 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.send({
         data: {
           ...project,
+          assignedTeams: resolvedAssignedTeams,
+          tickets: visibleTickets,
           totalTicketsCount,
           completedTicketsCount,
           progressPercentage,
@@ -352,6 +438,59 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           ticketStatusBreakdown,
         },
       });
+    }
+  );
+
+  // 3b. Get Project Summary (Completed, Blockers, Planned + Optional AI Narrative)
+  app.get(
+    '/:key/summary',
+    {
+      schema: {
+        description: 'Get structured project summary (tasks completed, blockers present, tasks planned) with optional AI narrative',
+        tags: ['Projects'],
+        params: z.object({
+          key: z.string(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { key } = request.params;
+      const caller = await getCurrentUser(request);
+      const summary = await getProjectSummary(key, caller?.id ?? null);
+      if (!summary) {
+        return reply.status(404).send({ error: 'Project not found' });
+      }
+      return reply.send({ data: summary });
+    }
+  );
+
+  // 3c. Regenerate Project Summary (Refreshes cached AI narrative, rate-limited)
+  app.post(
+    '/:key/summary/regenerate',
+    {
+      schema: {
+        description: 'Regenerate cached AI narrative for a project summary (rate-limited)',
+        tags: ['Projects'],
+        params: z.object({
+          key: z.string(),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const { key } = request.params;
+      const caller = await getCurrentUser(request);
+      try {
+        const summary = await getProjectSummary(key, caller?.id ?? null, { regenerate: true });
+        if (!summary) {
+          return reply.status(404).send({ error: 'Project not found' });
+        }
+        return reply.send({ data: summary });
+      } catch (err) {
+        if (err instanceof RateLimitError) {
+          return reply.status(429).send({ error: err.message });
+        }
+        throw err;
+      }
     }
   );
 
@@ -483,6 +622,14 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           reviewerId: resolvedReviewerId,
         })
         .returning();
+
+      // Link primaryTeamId in projectTeams M2M table if provided
+      if (resolvedTeamId) {
+        await db.insert(projectTeams).values({
+          projectId: newProject.id,
+          teamId: resolvedTeamId,
+        }).onConflictDoNothing();
+      }
 
       // Add audit log
       await db.insert(projectActivityLogs).values({
@@ -741,6 +888,92 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       return reply.send({ data: updated });
+    }
+  );
+
+  // 5a. Assign / Sync Multiple Teams on a Project
+  app.put(
+    '/:key/teams',
+    {
+      schema: {
+        description: 'Assign multiple teams to a project (replaces current team assignments)',
+        tags: ['Projects'],
+        params: z.object({
+          key: z.string(),
+        }),
+        body: z.object({
+          teamIds: z.array(z.string().uuid()),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const user = await getCurrentUser(request);
+      if (!user) return reply.status(401).send({ error: 'Unauthorized' });
+
+      const { key } = request.params;
+      const targetProject = await db.query.projects.findFirst({
+        where: eq(projects.key, key),
+      });
+
+      if (!targetProject) {
+        return reply.status(404).send({ error: 'Project not found' });
+      }
+
+      const callerTierInfo = await getUserRoleTier(user.id, key);
+      const { permissions } = await getEffectiveUserPermissions(user.id, key);
+      const isAssignedPm = targetProject.projectManagerId === user.id;
+      const canManage =
+        callerTierInfo.tier >= 4 ||
+        ((callerTierInfo.tier >= 3 || isAssignedPm) &&
+          (hasPermission(permissions, Permissions.PROJECT_EDIT) || hasPermission(permissions, Permissions.MEMBER_MANAGE)));
+
+      if (!canManage || callerTierInfo.tier < 3) {
+        return reply.status(403).send({
+          type: 'https://errors.coretrack.internal/forbidden',
+          title: 'Access Denied',
+          status: 403,
+          error: 'FORBIDDEN',
+          message: 'Only Super Admins, Admins, or Project Managers can assign teams to projects.',
+        });
+      }
+
+      const uniqueTeamIds = Array.from(new Set(request.body.teamIds));
+
+      // Validate all team IDs exist
+      const validTeams = uniqueTeamIds.length > 0
+        ? await db.query.teams.findMany({ where: inArray(teams.id, uniqueTeamIds) })
+        : [];
+      const validTeamIds = validTeams.map((t) => t.id);
+
+      // Replace projectTeams rows
+      await db.delete(projectTeams).where(eq(projectTeams.projectId, targetProject.id));
+      if (validTeamIds.length > 0) {
+        await db.insert(projectTeams).values(
+          validTeamIds.map((teamId) => ({
+            projectId: targetProject.id,
+            teamId,
+          }))
+        );
+      }
+
+      // Sync primaryTeamId to the first assigned team (or null) for backwards compatibility
+      await db
+        .update(projects)
+        .set({
+          primaryTeamId: validTeamIds[0] || null,
+          updatedAt: new Date(),
+        })
+        .where(eq(projects.id, targetProject.id));
+
+      const teamNames = validTeams.map((t) => `${t.name} (${t.keyPrefix})`).join(', ');
+      await db.insert(projectActivityLogs).values({
+        projectId: targetProject.id,
+        userId: user.id,
+        action: 'TEAMS_UPDATED',
+        details: `${user.fullName} updated assigned teams: ${teamNames || 'None'}`,
+      });
+
+      return reply.send({ data: { teamIds: validTeamIds, teams: validTeams } });
     }
   );
 

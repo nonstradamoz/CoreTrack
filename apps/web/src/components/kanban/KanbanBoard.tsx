@@ -15,30 +15,48 @@ interface KanbanBoardProps {
   priorityFilter?: string;
 }
 
-const COLUMNS: { id: Ticket['status']; title: string; countColor: string }[] = [
+const COLUMNS: { id: Ticket['status']; title: string; countColor: string; matchStatuses: Ticket['status'][] }[] = [
   {
     id: 'TODO',
     title: 'To Do',
+    matchStatuses: ['TODO', 'BACKLOG'],
     countColor:
       'text-slate-600 dark:text-slate-400 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700',
   },
   {
+    id: 'PENDING_APPROVAL',
+    title: 'Pending Approval',
+    matchStatuses: ['PENDING_APPROVAL'],
+    countColor:
+      'text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 border border-purple-200 dark:border-purple-800/80',
+  },
+  {
     id: 'IN_PROGRESS',
     title: 'In Progress',
+    matchStatuses: ['IN_PROGRESS'],
     countColor:
       'text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800/80',
   },
   {
     id: 'IN_REVIEW',
     title: 'In Review',
+    matchStatuses: ['IN_REVIEW'],
     countColor:
       'text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800/80',
   },
   {
     id: 'DONE',
     title: 'Done',
+    matchStatuses: ['DONE', 'RESOLVED'],
     countColor:
       'text-emerald-800 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800/80',
+  },
+  {
+    id: 'CANCELED',
+    title: 'Canceled',
+    matchStatuses: ['CANCELED'],
+    countColor:
+      'text-rose-700 dark:text-rose-300 bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800/80',
   },
 ];
 
@@ -124,15 +142,15 @@ export function KanbanBoard({ project, searchQuery = '', priorityFilter = 'ALL' 
         </div>
       )}
 
-      {/* 4-Column Board Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 flex-1 items-start">
+      {/* 6-Column Board Grid (horizontally scrollable on smaller viewports) */}
+      <div className="flex gap-4 overflow-x-auto pb-2 flex-1 items-start">
         {COLUMNS.map((col) => {
-          const colTickets = filteredTickets.filter((t) => t.status === col.id);
+          const colTickets = filteredTickets.filter((t) => col.matchStatuses.includes(t.status));
 
           return (
             <div
               key={col.id}
-              className="flex flex-col rounded-xl border border-slate-200/80 dark:border-slate-800/80 bg-slate-100/70 dark:bg-slate-900/40 p-3 min-h-[520px]"
+              className="flex flex-col rounded-xl border border-slate-200/80 dark:border-slate-800/80 bg-slate-100/70 dark:bg-slate-900/40 p-3 min-h-[520px] min-w-[260px] flex-1"
             >
               {/* Column Header */}
               <div className="flex items-center justify-between pb-3 px-1 mb-1">

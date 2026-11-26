@@ -19,9 +19,12 @@ export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
   email: varchar('email', { length: 255 }).notNull().unique(),
   fullName: varchar('full_name', { length: 150 }).notNull(),
+  designation: varchar('designation', { length: 120 }),
   avatarUrl: text('avatar_url'),
   userType: varchar('user_type', { length: 30 }).default('INTERNAL_EMPLOYEE').notNull(),
   status: varchar('status', { length: 30 }).default('ACTIVE').notNull(),
+  passwordHash: text('password_hash'),
+  mustChangePassword: boolean('must_change_password').default(false).notNull(),
   globalPermissions: bigint('global_permissions', { mode: 'bigint' }).default(sql`0`).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
@@ -90,6 +93,21 @@ export const projects = pgTable('projects', {
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
 
+// 3a. PROJECT TEAMS (Many-to-Many: multiple teams assigned to a project)
+export const projectTeams = pgTable(
+  'project_teams',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    teamId: uuid('team_id').notNull().references(() => teams.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_project_teams_project_team').on(table.projectId, table.teamId),
+    index('idx_project_teams_team').on(table.teamId),
+  ]
+);
+
 // 3b. PROJECT MILESTONES & DELIVERABLES
 export const projectMilestones = pgTable('project_milestones', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -130,6 +148,7 @@ export const tickets = pgTable(
   {
     id: uuid('id').defaultRandom().primaryKey(),
     projectId: uuid('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+    teamId: uuid('team_id').references(() => teams.id, { onDelete: 'set null' }),
     ticketKey: varchar('ticket_key', { length: 20 }).notNull().unique(),
     ticketNumber: integer('ticket_number').notNull(),
     ticketType: varchar('ticket_type', { length: 30 }).notNull(),
@@ -170,6 +189,7 @@ export const tickets = pgTable(
   (table) => [
     uniqueIndex('idx_tickets_key_unique').on(table.ticketKey),
     index('idx_tickets_project_status').on(table.projectId, table.status),
+    index('idx_tickets_project_team').on(table.projectId, table.teamId),
     index('idx_tickets_assignee_active').on(table.assigneeId, table.status),
   ]
 );
@@ -339,7 +359,7 @@ export const emailNotificationLogs = pgTable(
     notificationType: varchar('notification_type', { length: 50 }).notNull(), // TASK_ASSIGNED, PROJECT_ASSIGNED, TASK_OVERDUE, PROJECT_OVERDUE, SPRINT_PROMOTED
     ticketId: uuid('ticket_id').references(() => tickets.id, { onDelete: 'set null' }),
     projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
-    provider: varchar('provider', { length: 50 }).default('RESEND'), // RESEND, MAILJET, SMTP, LOCAL
+    provider: varchar('provider', { length: 50 }).default('RESEND'), // RESEND, MAILJET, BREVO
     status: varchar('status', { length: 20 }).default('SENT').notNull(), // SENT, FAILED
     errorMessage: text('error_message'),
     sentAt: timestamp('sent_at', { withTimezone: true }).defaultNow().notNull(),
@@ -348,6 +368,108 @@ export const emailNotificationLogs = pgTable(
     index('idx_email_logs_type_recipient').on(table.notificationType, table.recipientEmail),
     index('idx_email_logs_ticket').on(table.ticketId),
     index('idx_email_logs_project').on(table.projectId),
+  ]
+);
+
+// 14. WORKSPACE CHAT CHANNELS & MESSAGES
+export const chatChannels = pgTable(
+  'chat_channels',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    channelType: varchar('channel_type', { length: 30 }).notNull(), // 'DIRECT' | 'TEAM' | 'PROJECT'
+    name: varchar('name', { length: 120 }),
+    teamId: uuid('team_id').references(() => teams.id, { onDelete: 'cascade' }),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    dmKey: varchar('dm_key', { length: 100 }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_chat_channels_team').on(table.teamId),
+    uniqueIndex('idx_chat_channels_project').on(table.projectId),
+    uniqueIndex('idx_chat_channels_dm_key').on(table.dmKey),
+  ]
+);
+
+export const chatChannelMembers = pgTable(
+  'chat_channel_members',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    channelId: uuid('channel_id').notNull().references(() => chatChannels.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    lastReadAt: timestamp('last_read_at', { withTimezone: true }).defaultNow().notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_chat_channel_members_unique').on(table.channelId, table.userId),
+    index('idx_chat_channel_members_user').on(table.userId),
+  ]
+);
+
+export const chatMessages = pgTable(
+  'chat_messages',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    channelId: uuid('channel_id').notNull().references(() => chatChannels.id, { onDelete: 'cascade' }),
+    senderId: uuid('sender_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    parentMessageId: uuid('parent_message_id'),
+    body: text('body').notNull(),
+    attachments: jsonb('attachments').default([]).notNull(),
+    reactions: jsonb('reactions').default({}).notNull(),
+    editedAt: timestamp('edited_at', { withTimezone: true }),
+    deletedAt: timestamp('deleted_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_chat_messages_channel_created').on(table.channelId, table.createdAt),
+    index('idx_chat_messages_parent').on(table.parentMessageId),
+  ]
+);
+
+// 15. STANDALONE HELPDESK PORTAL TICKETS & COMMENTS
+export const helpdeskTickets = pgTable(
+  'helpdesk_tickets',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ticketKey: varchar('ticket_key', { length: 20 }).notNull().unique(),
+    ticketNumber: integer('ticket_number').notNull(),
+    category: varchar('category', { length: 80 }).notNull(),
+    requestType: varchar('request_type', { length: 30 }).default('SERVICE_REQUEST').notNull(), // 'SERVICE_REQUEST' | 'INCIDENT'
+    title: varchar('title', { length: 255 }).notNull(),
+    description: text('description').default('').notNull(),
+    department: varchar('department', { length: 80 }).default('Engineering').notNull(),
+    priority: varchar('priority', { length: 20 }).default('MEDIUM').notNull(),
+    status: varchar('status', { length: 30 }).default('OPEN').notNull(), // 'OPEN' | 'IN_PROGRESS' | 'WAITING_ON_USER' | 'RESOLVED' | 'CLOSED'
+    requesterId: uuid('requester_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    assigneeId: uuid('assignee_id').references(() => users.id, { onDelete: 'set null' }),
+    statusSetByRoleTier: integer('status_set_by_role_tier').default(1).notNull(),
+    assigneeSetByRoleTier: integer('assignee_set_by_role_tier').default(1).notNull(),
+    slaResponseDueAt: timestamp('sla_response_due_at', { withTimezone: true }),
+    slaResolutionDueAt: timestamp('sla_resolution_due_at', { withTimezone: true }),
+    isSlaPaused: boolean('is_sla_paused').default(false).notNull(),
+    resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex('idx_helpdesk_tickets_key').on(table.ticketKey),
+    index('idx_helpdesk_tickets_requester').on(table.requesterId),
+    index('idx_helpdesk_tickets_status').on(table.status),
+  ]
+);
+
+export const helpdeskComments = pgTable(
+  'helpdesk_comments',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    ticketId: uuid('ticket_id').notNull().references(() => helpdeskTickets.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id').notNull().references(() => users.id, { onDelete: 'cascade' }),
+    body: text('body').notNull(),
+    isInternal: boolean('is_internal').default(false).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index('idx_helpdesk_comments_ticket').on(table.ticketId, table.createdAt),
   ]
 );
 
@@ -364,6 +486,12 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   dailyStandups: many(dailyStandups),
   roles: many(roles),
   members: many(projectMembers),
+  assignedTeams: many(projectTeams),
+}));
+
+export const projectTeamsRelations = relations(projectTeams, ({ one }) => ({
+  project: one(projects, { fields: [projectTeams.projectId], references: [projects.id] }),
+  team: one(teams, { fields: [projectTeams.teamId], references: [teams.id] }),
 }));
 
 export const teamsRelations = relations(teams, ({ one, many }) => ({
@@ -371,6 +499,8 @@ export const teamsRelations = relations(teams, ({ one, many }) => ({
   lead: one(users, { fields: [teams.leadId], references: [users.id] }),
   members: many(teamMembers),
   projects: many(projects),
+  projectAssignments: many(projectTeams),
+  tickets: many(tickets),
 }));
 
 export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
@@ -413,6 +543,7 @@ export const dailyStandupsRelations = relations(dailyStandups, ({ one }) => ({
 }));
 export const ticketsRelations = relations(tickets, ({ one, many }) => ({
   project: one(projects, { fields: [tickets.projectId], references: [projects.id] }),
+  team: one(teams, { fields: [tickets.teamId], references: [teams.id] }),
   reporter: one(users, { fields: [tickets.reporterId], references: [users.id] }),
   assignee: one(users, { fields: [tickets.assigneeId], references: [users.id] }),
   assignedByUser: one(users, { fields: [tickets.assignedByUserId], references: [users.id] }),
@@ -442,4 +573,32 @@ export const ticketApprovalsRelations = relations(ticketApprovals, ({ one }) => 
 
 export const ticketVcsLinksRelations = relations(ticketVcsLinks, ({ one }) => ({
   ticket: one(tickets, { fields: [ticketVcsLinks.ticketId], references: [tickets.id] }),
+}));
+
+export const chatChannelsRelations = relations(chatChannels, ({ one, many }) => ({
+  team: one(teams, { fields: [chatChannels.teamId], references: [teams.id] }),
+  project: one(projects, { fields: [chatChannels.projectId], references: [projects.id] }),
+  members: many(chatChannelMembers),
+  messages: many(chatMessages),
+}));
+
+export const chatChannelMembersRelations = relations(chatChannelMembers, ({ one }) => ({
+  channel: one(chatChannels, { fields: [chatChannelMembers.channelId], references: [chatChannels.id] }),
+  user: one(users, { fields: [chatChannelMembers.userId], references: [users.id] }),
+}));
+
+export const chatMessagesRelations = relations(chatMessages, ({ one }) => ({
+  channel: one(chatChannels, { fields: [chatMessages.channelId], references: [chatChannels.id] }),
+  sender: one(users, { fields: [chatMessages.senderId], references: [users.id] }),
+}));
+
+export const helpdeskTicketsRelations = relations(helpdeskTickets, ({ one, many }) => ({
+  requester: one(users, { fields: [helpdeskTickets.requesterId], references: [users.id], relationName: 'helpdesk_requester' }),
+  assignee: one(users, { fields: [helpdeskTickets.assigneeId], references: [users.id], relationName: 'helpdesk_assignee' }),
+  comments: many(helpdeskComments),
+}));
+
+export const helpdeskCommentsRelations = relations(helpdeskComments, ({ one }) => ({
+  ticket: one(helpdeskTickets, { fields: [helpdeskComments.ticketId], references: [helpdeskTickets.id] }),
+  author: one(users, { fields: [helpdeskComments.authorId], references: [users.id] }),
 }));

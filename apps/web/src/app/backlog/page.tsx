@@ -104,6 +104,7 @@ export default function BacklogPage() {
     const matchesSearch =
       !searchQuery ||
       t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (t.displayKey || t.ticketKey).toLowerCase().includes(searchQuery.toLowerCase()) ||
       t.ticketKey.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesPriority =
       !priorityFilter || priorityFilter === 'ALL' || t.priority === priorityFilter;
@@ -310,7 +311,7 @@ export default function BacklogPage() {
                     >
                       <div className="flex items-center gap-3">
                         <span className="font-mono text-xs font-semibold text-slate-500 dark:text-slate-400 w-20">
-                          {ticket.ticketKey}
+                          {ticket.displayKey || ticket.ticketKey}
                         </span>
                         <span className="text-sm font-medium text-slate-900 dark:text-slate-100">{ticket.title}</span>
                       </div>
@@ -398,7 +399,7 @@ export default function BacklogPage() {
                 >
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-xs font-semibold text-slate-500 dark:text-slate-400 w-20">
-                      {ticket.ticketKey}
+                      {ticket.displayKey || ticket.ticketKey}
                     </span>
                     <span className="text-sm font-medium text-slate-800 dark:text-slate-200">{ticket.title}</span>
                   </div>

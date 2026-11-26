@@ -33,13 +33,14 @@ import {
 
 export default function TimelinePage() {
   const queryClient = useQueryClient();
-  const { activeProject } = useProject();
+  const { projects, activeProject } = useProject();
   const { canAccess } = useModuleAccess();
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDependencyModalOpen, setIsDependencyModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
+  const [projectScope, setProjectScope] = useState<string>(activeProject?.key || 'ALL');
 
   // Dependency Modal State
   const [sourceKey, setSourceKey] = useState('');
@@ -47,18 +48,26 @@ export default function TimelinePage() {
   const [depType, setDepType] = useState<'BLOCKS' | 'BLOCKED_BY' | 'RELATES_TO'>('BLOCKS');
   const [depError, setDepError] = useState<string | null>(null);
 
-  // 1. Fetch tickets
+  // 1. Fetch tickets for selected project or all assigned projects
   const { data: tickets = [] } = useQuery({
-    queryKey: ['tickets', activeProject?.key || 'CORE'],
-    queryFn: () => fetchTickets(activeProject?.key || 'CORE'),
-    enabled: !!activeProject,
+    queryKey: ['timelineTickets', projectScope, projects.map((p) => p.key).join(',')],
+    queryFn: async () => {
+      if (projectScope === 'ALL') {
+        if (projects.length === 0) return [];
+        const batches = await Promise.all(projects.map((p) => fetchTickets(p.key).catch(() => [])));
+        return batches.flat();
+      }
+      return fetchTickets(projectScope);
+    },
+    enabled: projects.length > 0,
   });
 
   // 2. Fetch dependencies
+  const depProjectKey = projectScope === 'ALL' ? activeProject?.key || projects[0]?.key || 'CORE' : projectScope;
   const { data: dependencies = [] } = useQuery({
-    queryKey: ['dependencies', activeProject?.key || 'CORE'],
-    queryFn: () => fetchProjectDependencies(activeProject?.key || 'CORE'),
-    enabled: !!activeProject,
+    queryKey: ['dependencies', depProjectKey],
+    queryFn: () => fetchProjectDependencies(depProjectKey),
+    enabled: projects.length > 0,
   });
 
   // Mutations
@@ -108,6 +117,7 @@ export default function TimelinePage() {
     const matchesSearch =
       !searchQuery ||
       t.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (t.displayKey || t.ticketKey).toLowerCase().includes(searchQuery.toLowerCase()) ||
       t.ticketKey.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = !statusFilter || statusFilter === 'ALL' || t.status === statusFilter;
     return matchesSearch && matchesStatus;
@@ -159,7 +169,21 @@ export default function TimelinePage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            {projects.length > 0 && (
+              <select
+                value={projectScope}
+                onChange={(e) => setProjectScope(e.target.value)}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-600 cursor-pointer"
+              >
+                <option value="ALL">All Assigned Projects ({projects.length})</option>
+                {projects.map((p) => (
+                  <option key={p.id} value={p.key}>
+                    {p.name} ({p.key})
+                  </option>
+                ))}
+              </select>
+            )}
             <button
               onClick={() => {
                 setDepError(null);
@@ -274,15 +298,23 @@ export default function TimelinePage() {
             filteredTickets.map((ticket) => {
               const conflict = conflicts.get(ticket.ticketKey);
 
-              // Calculate start and end offset in grid
-              const createdDate = new Date(ticket.createdAt);
-              const dueDate = ticket.dueDate ? new Date(ticket.dueDate) : new Date(createdDate.getTime() + 4 * 86400000);
+              // Calculate exact start and end offset in grid using startDate || createdAt and dueDate
+              const rawStart = new Date(ticket.startDate || ticket.createdAt);
+              rawStart.setHours(0, 0, 0, 0);
+              const rawDue = ticket.dueDate
+                ? new Date(ticket.dueDate)
+                : new Date(rawStart.getTime() + 3 * 86400000);
+              rawDue.setHours(23, 59, 59, 999);
 
-              const diffStartDays = Math.max(0, Math.floor((createdDate.getTime() - startDateMin.getTime()) / 86400000));
-              const diffDurationDays = Math.max(1, Math.min(totalDays - diffStartDays, Math.ceil((dueDate.getTime() - createdDate.getTime()) / 86400000)));
+              const gridStart = new Date(startDateMin);
+              gridStart.setHours(0, 0, 0, 0);
 
-              const leftPercent = Math.min(100, Math.max(0, (diffStartDays / totalDays) * 100));
-              const widthPercent = Math.min(100 - leftPercent, Math.max(8, (diffDurationDays / totalDays) * 100));
+              const diffStartDays = Math.max(0, Math.floor((rawStart.getTime() - gridStart.getTime()) / 86400000));
+              const spanDays = Math.max(1, Math.ceil((rawDue.getTime() - Math.max(rawStart.getTime(), gridStart.getTime())) / 86400000));
+              const diffDurationDays = Math.min(totalDays - diffStartDays, spanDays);
+
+              const leftPercent = Math.min(96, Math.max(0, (diffStartDays / totalDays) * 100));
+              const widthPercent = Math.min(100 - leftPercent, Math.max(6, (diffDurationDays / totalDays) * 100));
 
               return (
                 <div
@@ -295,7 +327,7 @@ export default function TimelinePage() {
                     <div className="min-w-0 flex-1 pr-2">
                       <div className="flex items-center gap-1.5">
                         <span className="font-mono text-xs font-semibold text-slate-500 dark:text-slate-400">
-                          {ticket.ticketKey}
+                          {ticket.displayKey || ticket.ticketKey}
                         </span>
                         {conflict && (
                           <span

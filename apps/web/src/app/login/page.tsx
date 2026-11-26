@@ -2,100 +2,104 @@
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { loginUser, fetchAvailableUsers, UserPersona } from '../../lib/api';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { loginUser, setupInitialPassword } from '../../lib/api';
 import { Logo } from '../../components/brand/Logo';
 import {
-  Shield,
-  Code2,
-  User,
   Lock,
   Mail,
   ArrowRight,
-  CheckCircle2,
   AlertCircle,
-  Sparkles,
   Eye,
   EyeOff,
   Zap,
+  ShieldCheck,
 } from 'lucide-react';
+
+function validateStrongPassword(pw: string): string | null {
+  if (
+    pw.length < 8 ||
+    !/[A-Z]/.test(pw) ||
+    !/[a-z]/.test(pw) ||
+    !/[0-9]/.test(pw)
+  ) {
+    return 'Password must be at least 8 characters and include an uppercase letter, a lowercase letter, and a number.';
+  }
+  return null;
+}
 
 export default function LoginPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
 
-  const [activeTab, setActiveTab] = useState<'QUICK' | 'MANUAL'>('QUICK');
-  const [email, setEmail] = useState('admin@coretrack.internal');
-  const [password, setPassword] = useState('password123');
+  const [mode, setMode] = useState<'LOGIN' | 'SETUP_PASSWORD'>('LOGIN');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Fetch all available seeded test personas
-  const { data: availableUsers = [] } = useQuery({
-    queryKey: ['availableUsers'],
-    queryFn: fetchAvailableUsers,
-  });
+  const onAuthSuccess = () => {
+    queryClient.invalidateQueries({ queryKey: ['currentUser'] });
+    queryClient.invalidateQueries({ queryKey: ['currentUserPermissions'] });
+    queryClient.invalidateQueries({ queryKey: ['tickets'] });
+    queryClient.invalidateQueries({ queryKey: ['portfolioDashboard'] });
+    router.push('/dashboard');
+  };
 
   const loginMutation = useMutation({
-    mutationFn: (credentials: { email: string; password?: string }) =>
+    mutationFn: (credentials: { email: string; password: string }) =>
       loginUser(credentials.email, credentials.password),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['currentUser'] });
-      queryClient.invalidateQueries({ queryKey: ['currentUserPermissions'] });
-      queryClient.invalidateQueries({ queryKey: ['tickets'] });
-      queryClient.invalidateQueries({ queryKey: ['portfolioDashboard'] });
-      router.push('/dashboard');
-    },
-    onError: (err: Error) => {
-      setErrorMessage(err.message || 'Login failed. Please check credentials.');
+    onSuccess: onAuthSuccess,
+    onError: (err: Error & { code?: string }) => {
+      if (err.code === 'PASSWORD_SETUP_REQUIRED') {
+        setErrorMessage(null);
+        setMode('SETUP_PASSWORD');
+        return;
+      }
+      setErrorMessage(err.message || 'Invalid email or password.');
     },
   });
 
-  const handleQuickLogin = (targetEmail: string) => {
-    setErrorMessage(null);
-    loginMutation.mutate({ email: targetEmail, password: 'password123' });
-  };
+  const setupMutation = useMutation({
+    mutationFn: (payload: { email: string; password: string }) =>
+      setupInitialPassword(payload.email, payload.password),
+    onSuccess: onAuthSuccess,
+    onError: (err: Error) => {
+      setErrorMessage(err.message || 'Failed to set password.');
+    },
+  });
 
-  const handleManualSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-    if (!email) {
-      setErrorMessage('Please enter an email address.');
+    if (!email.trim()) {
+      setErrorMessage('Please enter your email address.');
       return;
     }
-    loginMutation.mutate({ email, password });
+    if (!password) {
+      setErrorMessage('Please enter your password.');
+      return;
+    }
+    loginMutation.mutate({ email: email.trim(), password });
   };
 
-  const personas = [
-    {
-      email: 'admin@coretrack.internal',
-      role: 'Super Admin',
-      tag: 'Full Access (0x1)',
-      desc: 'Full bypass rights across all modules, projects, member roles, automations, and settings.',
-      icon: Shield,
-      accent: 'border-blue-500 bg-blue-50/50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300',
-      badge: 'bg-blue-600 text-white',
-    },
-    {
-      email: 'engineer@coretrack.internal',
-      role: 'Team Lead',
-      tag: 'Technical Lead',
-      desc: 'Can manage sprints, move Kanban tickets, link dependencies, view reports & all tasks table.',
-      icon: Code2,
-      accent: 'border-emerald-500 bg-emerald-50/50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300',
-      badge: 'bg-emerald-600 text-white',
-    },
-    {
-      email: 'employee@coretrack.internal',
-      role: 'Employee',
-      tag: 'Service Desk Portal',
-      desc: 'Can view dashboard, assigned board tasks, and submit service catalog tickets.',
-      icon: User,
-      accent: 'border-purple-500 bg-purple-50/50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300',
-      badge: 'bg-purple-600 text-white',
-    },
-  ];
+  const handleSetupSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+    const policyErr = validateStrongPassword(newPassword);
+    if (policyErr) {
+      setErrorMessage(policyErr);
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setErrorMessage('Passwords do not match.');
+      return;
+    }
+    setupMutation.mutate({ email: email.trim(), password: newPassword });
+  };
 
   return (
     <div className="min-h-screen w-screen flex flex-col justify-center items-center p-4 bg-[#F5F6F8] dark:bg-[#111318] text-[#17191F] dark:text-[#F3F4F6] selection:bg-blue-100 selection:text-blue-900 transition-colors">
@@ -104,104 +108,30 @@ export default function LoginPage() {
       <div className="absolute bottom-1/4 -right-20 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
 
       {/* Main Login Card */}
-      <div className="relative w-full max-w-lg rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-xl p-8 z-10">
+      <div className="relative w-full max-w-md rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-xl p-8 z-10 space-y-6">
         {/* Brand Header */}
-        <div className="flex flex-col items-center text-center mb-6">
+        <div className="flex flex-col items-center text-center">
           <Logo size="lg" showWordmark={true} />
           <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 mt-4">
-            Sign in to CoreTrack
+            {mode === 'SETUP_PASSWORD' ? 'Set Your Password' : 'Sign in to CoreTrack'}
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
-            Enterprise Task Management, ITSM Ticketing &amp; Agile Delivery Platform
+            {mode === 'SETUP_PASSWORD'
+              ? `Create a password for ${email} to complete your first-time sign in.`
+              : 'Enterprise Task Management, ITSM Ticketing & Agile Delivery Platform'}
           </p>
-        </div>
-
-        {/* Tab Toggle: Quick Test Personas vs Manual Credentials */}
-        <div className="flex items-center gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800/70 border border-slate-200/80 dark:border-slate-700/60 mb-6">
-          <button
-            type="button"
-            onClick={() => setActiveTab('QUICK')}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer ${
-              activeTab === 'QUICK'
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs font-bold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
-            }`}
-          >
-            <Sparkles className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-            <span>Quick Test Personas</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setActiveTab('MANUAL')}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5 cursor-pointer ${
-              activeTab === 'MANUAL'
-                ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 shadow-2xs font-bold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
-            }`}
-          >
-            <Lock className="h-3.5 w-3.5 text-slate-400" />
-            <span>Credentials</span>
-          </button>
         </div>
 
         {/* Error Alert */}
         {errorMessage && (
-          <div className="mb-4 p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
+          <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-rose-700 dark:text-rose-300 text-xs flex items-center gap-2">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span>{errorMessage}</span>
           </div>
         )}
 
-        {/* TAB 1: 1-CLICK QUICK TEST PERSONA LOGIN */}
-        {activeTab === 'QUICK' && (
-          <div className="space-y-3">
-            <p className="text-[11px] text-slate-400 text-center font-medium mb-1">
-              Select any pre-configured test account to sign in immediately:
-            </p>
-
-            {personas.map((p) => {
-              const Icon = p.icon;
-              return (
-                <div
-                  key={p.email}
-                  onClick={() => handleQuickLogin(p.email)}
-                  className={`group p-4 rounded-2xl border transition-all duration-150 cursor-pointer flex items-center justify-between gap-3 shadow-2xs hover:scale-[1.01] hover:border-blue-500 ${p.accent}`}
-                >
-                  <div className="flex items-start gap-3 min-w-0">
-                    <div className="p-2.5 rounded-xl bg-white dark:bg-slate-900 shadow-2xs shrink-0">
-                      <Icon className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
-                          {p.role}
-                        </span>
-                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-mono font-bold ${p.badge}`}>
-                          {p.tag}
-                        </span>
-                      </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
-                        {p.email}
-                      </p>
-                      <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 line-clamp-1">
-                        {p.desc}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="h-8 w-8 rounded-full bg-white dark:bg-slate-800 text-slate-400 group-hover:text-blue-600 group-hover:bg-blue-50 dark:group-hover:bg-blue-950 flex items-center justify-center shrink-0 shadow-2xs transition">
-                    <ArrowRight className="h-4 w-4" />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* TAB 2: MANUAL CREDENTIALS LOGIN FORM */}
-        {activeTab === 'MANUAL' && (
-          <form onSubmit={handleManualSubmit} className="space-y-4">
+        {mode === 'LOGIN' ? (
+          <form onSubmit={handleLoginSubmit} className="space-y-4">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                 Email Address
@@ -211,7 +141,7 @@ export default function LoginPage() {
                 <input
                   type="email"
                   required
-                  placeholder="name@coretrack.internal"
+                  placeholder="name@company.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition shadow-2xs"
@@ -228,7 +158,7 @@ export default function LoginPage() {
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
-                  placeholder="Enter test password (e.g. password123)"
+                  placeholder="Enter your password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition shadow-2xs"
@@ -236,14 +166,11 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
                 >
                   {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
-              <p className="text-[10px] text-slate-400 mt-1">
-                Tip: Test password <span className="font-mono font-semibold">password123</span> or any text works.
-              </p>
             </div>
 
             <div className="flex items-center justify-between text-xs pt-1">
@@ -256,14 +183,6 @@ export default function LoginPage() {
                 />
                 <span>Remember me</span>
               </label>
-
-              <button
-                type="button"
-                onClick={() => setEmail('admin@coretrack.internal')}
-                className="text-blue-600 dark:text-blue-400 hover:underline font-semibold"
-              >
-                Use admin email
-              </button>
             </div>
 
             <button
@@ -281,10 +200,89 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+        ) : (
+          <form onSubmit={handleSetupSubmit} className="space-y-4">
+            <div className="p-3 rounded-xl bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200/70 dark:border-blue-900/60 text-[11px] text-blue-800 dark:text-blue-200 flex items-start gap-2">
+              <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5 text-blue-600 dark:text-blue-400" />
+              <span>
+                8+ characters with at least 1 uppercase letter, 1 lowercase letter, and 1 number.
+              </span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                New Password
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  placeholder="Create a strong password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition shadow-2xs"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3.5 top-3 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
+                Confirm Password
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3.5 top-3 h-4 w-4 text-slate-400" />
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  placeholder="Re-enter password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition shadow-2xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMode('LOGIN');
+                  setErrorMessage(null);
+                  setNewPassword('');
+                  setConfirmPassword('');
+                }}
+                className="px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition cursor-pointer"
+              >
+                Back
+              </button>
+              <button
+                type="submit"
+                disabled={setupMutation.isPending}
+                className="flex-1 py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {setupMutation.isPending ? (
+                  <span>Saving...</span>
+                ) : (
+                  <>
+                    <span>Set Password &amp; Sign In</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
         )}
 
         {/* Footer Info */}
-        <div className="mt-8 pt-4 border-t border-slate-100 dark:border-slate-800 text-center text-[11px] text-slate-400">
+        <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-center text-[11px] text-slate-400">
           <p className="flex items-center justify-center gap-1.5 font-medium">
             <Zap className="h-3 w-3 text-emerald-500" />
             <span>Fastify 64-bit Bitmask RBAC Active</span>

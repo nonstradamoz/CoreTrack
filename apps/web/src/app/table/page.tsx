@@ -16,6 +16,7 @@ import { AccessDenied } from '../../components/auth/AccessDenied';
 import { SLABadge } from '../../components/sla/SLABadge';
 import { TicketDetailModal } from '../../components/kanban/TicketDetailModal';
 import { CreateTicketModal } from '../../components/kanban/CreateTicketModal';
+import { usePermissions } from '../../hooks/usePermissions';
 import {
   Table2,
   Plus,
@@ -39,6 +40,7 @@ function TablePageInner() {
   const filterParam = searchParams.get('filter');
   const { activeProject } = useProject();
   const { canAccess } = useModuleAccess();
+  const { user, roleTier } = usePermissions();
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -224,10 +226,23 @@ function TablePageInner() {
             {/* Bulk Status Dropdown */}
             <select
               onChange={(e) => {
-                if (!e.target.value) return;
+                const newStatus = e.target.value as Ticket['status'];
+                if (!newStatus) return;
+                if (roleTier < 2) {
+                  const unauthorized = filteredTickets.filter(
+                    (t) => selectedKeys.has(t.ticketKey) && t.assigneeId !== user?.id
+                  );
+                  if (unauthorized.length > 0) {
+                    alert(
+                      `Access Denied: You cannot modify tasks assigned to others (${unauthorized.map((t) => t.ticketKey).join(', ')}). Only the assigned person or higher authorities can update tasks.`
+                    );
+                    e.target.value = '';
+                    return;
+                  }
+                }
                 bulkMutation.mutate({
                   ticketKeys: Array.from(selectedKeys),
-                  status: e.target.value as Ticket['status'],
+                  status: newStatus,
                 });
                 e.target.value = '';
               }}
@@ -245,10 +260,23 @@ function TablePageInner() {
             {/* Bulk Priority Dropdown */}
             <select
               onChange={(e) => {
-                if (!e.target.value) return;
+                const newPriority = e.target.value as Ticket['priority'];
+                if (!newPriority) return;
+                if (roleTier < 2) {
+                  const unauthorized = filteredTickets.filter(
+                    (t) => selectedKeys.has(t.ticketKey) && t.assigneeId !== user?.id
+                  );
+                  if (unauthorized.length > 0) {
+                    alert(
+                      `Access Denied: You cannot modify tasks assigned to others (${unauthorized.map((t) => t.ticketKey).join(', ')}). Only the assigned person or higher authorities can update tasks.`
+                    );
+                    e.target.value = '';
+                    return;
+                  }
+                }
                 bulkMutation.mutate({
                   ticketKeys: Array.from(selectedKeys),
-                  priority: e.target.value as Ticket['priority'],
+                  priority: newPriority,
                 });
                 e.target.value = '';
               }}
@@ -314,6 +342,9 @@ function TablePageInner() {
               ) : (
                 filteredTickets.map((ticket) => {
                   const isChecked = selectedKeys.has(ticket.ticketKey);
+                  const isAssignedToCurrentUser = Boolean(user?.id && ticket.assigneeId === user.id);
+                  const isHigherAuthority = roleTier >= 2;
+                  const canEditTicket = isHigherAuthority || isAssignedToCurrentUser || (!ticket.assigneeId && ticket.reporterId === user?.id);
 
                   return (
                     <tr
@@ -339,7 +370,7 @@ function TablePageInner() {
 
                       {/* Ticket Key */}
                       <td className="p-3 font-mono font-semibold text-slate-500 dark:text-slate-400">
-                        {ticket.ticketKey}
+                        {ticket.displayKey || ticket.ticketKey}
                       </td>
 
                       {/* Title */}
@@ -361,7 +392,13 @@ function TablePageInner() {
                               updates: { status: e.target.value as Ticket['status'] },
                             })
                           }
-                          className="px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-semibold text-slate-800 dark:text-slate-200 cursor-pointer hover:border-slate-400 focus:outline-none"
+                          disabled={!canEditTicket || inlineUpdateMutation.isPending}
+                          title={!canEditTicket ? 'Only assigned person or higher authorities can change status' : undefined}
+                          className={`px-2 py-0.5 rounded-md border text-[11px] font-semibold focus:outline-none ${
+                            !canEditTicket
+                              ? 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-pointer hover:border-slate-400'
+                          }`}
                         >
                           <option value="TODO">To Do</option>
                           <option value="IN_PROGRESS">In Progress</option>
@@ -385,7 +422,13 @@ function TablePageInner() {
                               updates: { priority: e.target.value as Ticket['priority'] },
                             })
                           }
-                          className="px-2 py-0.5 rounded-md border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-[11px] font-semibold text-slate-800 dark:text-slate-200 cursor-pointer hover:border-slate-400 focus:outline-none"
+                          disabled={!canEditTicket || inlineUpdateMutation.isPending}
+                          title={!canEditTicket ? 'Only assigned person or higher authorities can change priority' : undefined}
+                          className={`px-2 py-0.5 rounded-md border text-[11px] font-semibold focus:outline-none ${
+                            !canEditTicket
+                              ? 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                              : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-pointer hover:border-slate-400'
+                          }`}
                         >
                           <option value="URGENT">Urgent</option>
                           <option value="HIGH">High</option>

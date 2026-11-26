@@ -23,29 +23,32 @@ function getEnvConfig() {
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 
 export interface EmailProviderConfig {
-  name: 'RESEND' | 'MAILJET' | 'BREVO' | 'CUSTOM_SMTP' | 'LOCAL';
+  name: 'RESEND' | 'MAILJET' | 'BREVO';
   priority: number;
   from: string;
   transporter: Transporter;
 }
 
-let customTransporterOverride: Transporter | null = null;
 let mockProviderChainOverride: EmailProviderConfig[] | null = null;
-
-export function setMailTransporter(custom: Transporter | null) {
-  customTransporterOverride = custom;
-}
+let preferredPrimaryProvider: EmailProviderConfig['name'] | null = null;
 
 export function setMockProviderChain(chain: EmailProviderConfig[] | null) {
   mockProviderChainOverride = chain;
+}
+
+export function getPreferredPrimaryProvider(): EmailProviderConfig['name'] | null {
+  return preferredPrimaryProvider;
+}
+
+export function setPreferredPrimaryProvider(provider: EmailProviderConfig['name'] | null) {
+  preferredPrimaryProvider = provider;
 }
 
 /**
  * Builds the prioritized chain of email providers for automatic failover.
  * Priority 1: Resend (if configured)
  * Priority 2: Mailjet (if configured)
- * Priority 3: Custom SMTP (if configured)
- * Fallback: Local / Mock (for tests and offline dev)
+ * Priority 3: Brevo (if configured)
  */
 export function getMailProviders(): EmailProviderConfig[] {
   if (mockProviderChainOverride) {
@@ -61,23 +64,10 @@ export function getMailProviders(): EmailProviderConfig[] {
     BREVO_API_KEY,
     BREVO_FROM,
     SMTP_HOST,
-    SMTP_PORT,
-    SMTP_SECURE,
     SMTP_USER,
     SMTP_PASS,
     SMTP_FROM,
   } = getEnvConfig();
-
-  if (customTransporterOverride) {
-    return [
-      {
-        name: 'CUSTOM_SMTP',
-        priority: 1,
-        from: SMTP_FROM,
-        transporter: customTransporterOverride,
-      },
-    ];
-  }
 
   const providers: EmailProviderConfig[] = [];
 
@@ -173,56 +163,50 @@ export function getMailProviders(): EmailProviderConfig[] {
     });
   }
 
-  // Provider 4: Custom Generic SMTP (if host specified and not already added as Resend/Mailjet/Brevo)
-  if (
-    SMTP_HOST &&
-    !SMTP_HOST.includes('resend') &&
-    !SMTP_HOST.includes('mailjet') &&
-    !SMTP_HOST.includes('brevo') &&
-    SMTP_USER &&
-    SMTP_PASS
-  ) {
-    providers.push({
-      name: 'CUSTOM_SMTP',
-      priority: providers.length + 1,
-      from: SMTP_FROM,
-      transporter: nodemailer.createTransport({
-        host: SMTP_HOST,
-        port: SMTP_PORT,
-        secure: SMTP_SECURE,
-        auth: {
-          user: SMTP_USER,
-          pass: SMTP_PASS,
-        },
-      }),
-    });
+  // Reorder if a preferred primary provider is selected
+  if (preferredPrimaryProvider) {
+    const idx = providers.findIndex((p) => p.name === preferredPrimaryProvider);
+    if (idx > 0) {
+      const [chosen] = providers.splice(idx, 1);
+      providers.unshift(chosen);
+    }
   }
 
-  // Fallback / Development Transporter (Mock / JSON Stream for offline dev)
-  if (providers.length === 0) {
-    providers.push({
-      name: 'LOCAL',
-      priority: 99,
-      from: SMTP_FROM,
-      transporter: nodemailer.createTransport({
-        jsonTransport: true,
-      }),
-    });
-  }
-
-  return providers;
+  // Re-number priorities sequentially
+  return providers.map((p, i) => ({
+    ...p,
+    priority: i + 1,
+  }));
 }
 
 export function getProviderStatus() {
   const active = getMailProviders();
+  const { SMTP_FROM } = getEnvConfig();
+  const catalogNames: EmailProviderConfig['name'][] = ['RESEND', 'MAILJET', 'BREVO'];
+
+  const activeMap = new Map(active.map((p) => [p.name, p]));
+  const allGateways = catalogNames.map((name, idx) => {
+    const found = activeMap.get(name);
+    return {
+      name,
+      priority: found ? found.priority : idx + 10,
+      from: found ? found.from : SMTP_FROM,
+      configured: Boolean(found),
+      isPrimary: active[0]?.name === name,
+    };
+  });
+
   return {
     providers: active.map((p) => ({
       name: p.name,
       priority: p.priority,
       from: p.from,
+      configured: true,
+      isPrimary: active[0]?.name === p.name,
     })),
+    allGateways,
     failoverEnabled: active.length > 1,
-    primaryProvider: active[0]?.name || 'LOCAL',
+    primaryProvider: active[0]?.name || 'NONE',
     fallbackProvider: active[1]?.name || null,
   };
 }
@@ -299,10 +283,6 @@ export async function sendEmailNotification(options: EmailDispatchOptions): Prom
         text: text || subject,
       });
 
-      if (provider.name === 'LOCAL') {
-        console.log(`[Email Dev Preview] Message simulated for ${to}. Subject: "${subject}"`);
-      }
-
       successfulProvider = provider.name;
       if (i > 0) {
         failoverOccurred = true;
@@ -343,13 +323,13 @@ export async function sendEmailNotification(options: EmailDispatchOptions): Prom
   }
 
   // All providers failed
-  const finalError = errors.join('; ');
+  const finalError = errors.length > 0 ? errors.join('; ') : 'No mail gateway configured';
   if (logId) {
     try {
       await db
         .update(emailNotificationLogs)
         .set({
-          provider: providers[0]?.name || 'LOCAL',
+          provider: providers[0]?.name || 'NONE',
           status: 'FAILED',
           errorMessage: finalError,
         })
@@ -361,7 +341,7 @@ export async function sendEmailNotification(options: EmailDispatchOptions): Prom
 
   return {
     success: false,
-    provider: providers[0]?.name || 'LOCAL',
+    provider: providers[0]?.name || 'NONE',
     logId,
     error: finalError,
   };

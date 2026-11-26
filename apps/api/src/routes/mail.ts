@@ -23,6 +23,9 @@ import { getCurrentUser, getUserRoleTier } from '../auth/auth.js';
 import { Permissions } from '@coretrack/shared';
 import {
   getProviderStatus,
+  getMailProviders,
+  getPreferredPrimaryProvider,
+  setPreferredPrimaryProvider,
   sendDirectOrBroadcastEmail,
   sendEmailNotification,
 } from '../services/email.js';
@@ -109,6 +112,38 @@ export const mailRoutes: FastifyPluginAsync = async (fastify) => {
           },
         },
       });
+    }
+  );
+
+  // 1b. Select Primary Mail Gateway Server
+  app.put(
+    '/provider',
+    {
+      schema: {
+        description: 'Select the active primary mail gateway server',
+        tags: ['Mailing & Communications'],
+        body: z.object({
+          provider: z.enum(['RESEND', 'MAILJET', 'BREVO']),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const auth = await requireExecutiveCaller(request, reply);
+      if (!auth) return;
+
+      const { provider } = request.body;
+      const previous = getPreferredPrimaryProvider();
+      setPreferredPrimaryProvider(null);
+      const configured = getMailProviders().some((p) => p.name === provider);
+      if (!configured) {
+        setPreferredPrimaryProvider(previous);
+        return reply.status(400).send({
+          error: `Gateway ${provider} is not configured in environment variables.`,
+        });
+      }
+
+      setPreferredPrimaryProvider(provider);
+      return reply.send({ data: getProviderStatus() });
     }
   );
 

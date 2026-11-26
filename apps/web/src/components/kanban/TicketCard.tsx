@@ -1,9 +1,10 @@
 'use client';
 
 import React from 'react';
-import { Calendar, Clock, User } from 'lucide-react';
+import { Calendar, Clock, User, Lock } from 'lucide-react';
 import { Ticket } from '../../lib/api';
 import { SLABadge } from '../sla/SLABadge';
+import { usePermissions } from '../../hooks/usePermissions';
 
 interface TicketCardProps {
   ticket: Ticket;
@@ -29,6 +30,11 @@ const typeConfig = {
 };
 
 export function TicketCard({ ticket, onClick, onQuickMove }: TicketCardProps) {
+  const { user, roleTier } = usePermissions();
+  const isAssignedToCurrentUser = Boolean(user?.id && ticket.assigneeId === user.id);
+  const isHigherAuthority = roleTier >= 2;
+  const canQuickMove = isHigherAuthority || isAssignedToCurrentUser || (!ticket.assigneeId && ticket.reporterId === user?.id);
+
   const priority = priorityConfig[ticket.priority] || priorityConfig.MEDIUM;
   const typeStyle = typeConfig[ticket.ticketType] || typeConfig.TASK;
 
@@ -65,7 +71,7 @@ export function TicketCard({ ticket, onClick, onQuickMove }: TicketCardProps) {
       {/* Top Meta: Key & Story Points */}
       <div className="flex items-center justify-between gap-2 mb-2">
         <span className="font-mono text-xs font-semibold text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-slate-100 transition">
-          {ticket.ticketKey}
+          {ticket.displayKey || ticket.ticketKey}
         </span>
         <div className="flex items-center gap-1.5">
           {ticket.storyPoints !== null && ticket.storyPoints !== undefined && (
@@ -133,47 +139,57 @@ export function TicketCard({ ticket, onClick, onQuickMove }: TicketCardProps) {
         </span>
 
         {/* Quick move buttons */}
-        <div
-          className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {ticket.status !== 'TODO' && (
-            <button
-              onClick={() => onQuickMove('TODO')}
-              title="Move to Todo"
-              className="px-1.5 py-0.5 text-[10px] rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
-            >
-              Todo
-            </button>
-          )}
-          {ticket.status !== 'IN_PROGRESS' && (
-            <button
-              onClick={() => onQuickMove('IN_PROGRESS')}
-              title="Move to In Progress"
-              className="px-1.5 py-0.5 text-[10px] rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300"
-            >
-              Prog
-            </button>
-          )}
-          {ticket.status !== 'IN_REVIEW' && (
-            <button
-              onClick={() => onQuickMove('IN_REVIEW')}
-              title="Move to Review"
-              className="px-1.5 py-0.5 text-[10px] rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300"
-            >
-              Rev
-            </button>
-          )}
-          {ticket.status !== 'DONE' && (
-            <button
-              onClick={() => onQuickMove('DONE')}
-              title="Mark as Done"
-              className="px-1.5 py-0.5 text-[10px] rounded border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-medium"
-            >
-              Done
-            </button>
-          )}
-        </div>
+        {canQuickMove ? (
+          <div
+            className="opacity-0 group-hover:opacity-100 transition-opacity duration-150 flex items-center gap-1"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {ticket.status !== 'TODO' && (
+              <button
+                onClick={() => onQuickMove('TODO')}
+                title="Move to Todo"
+                className="px-1.5 py-0.5 text-[10px] rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
+              >
+                Todo
+              </button>
+            )}
+            {ticket.status !== 'IN_PROGRESS' && (
+              <button
+                onClick={() => onQuickMove('IN_PROGRESS')}
+                title="Move to In Progress"
+                className="px-1.5 py-0.5 text-[10px] rounded border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300"
+              >
+                Prog
+              </button>
+            )}
+            {ticket.status !== 'IN_REVIEW' && (
+              <button
+                onClick={() => onQuickMove('IN_REVIEW')}
+                title="Move to Review"
+                className="px-1.5 py-0.5 text-[10px] rounded border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/60 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300"
+              >
+                Rev
+              </button>
+            )}
+            {ticket.status !== 'DONE' && (
+              <button
+                onClick={() => onQuickMove('DONE')}
+                title="Mark as Done"
+                className="px-1.5 py-0.5 text-[10px] rounded border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-medium"
+              >
+                Done
+              </button>
+            )}
+          </div>
+        ) : (
+          <div
+            className="flex items-center gap-1 text-[10px] text-slate-400 dark:text-slate-500 font-medium"
+            title={`Assigned to ${ticket.assignee?.fullName || 'another member'}. Only assigned person can update.`}
+          >
+            <Lock className="h-2.5 w-2.5" />
+            <span>Assigned</span>
+          </div>
+        )}
       </div>
     </div>
   );

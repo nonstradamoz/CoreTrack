@@ -67,7 +67,7 @@ interface TicketDetailModalProps {
 
 export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
   const queryClient = useQueryClient();
-  const { hasPermission, roleTier } = usePermissions();
+  const { hasPermission, roleTier, user } = usePermissions();
   const canApprove = hasPermission(Permissions.APPROVAL_REVIEW);
   const canPostInternal = hasPermission(Permissions.COMMENT_VIEW_INTERNAL);
   const [newComment, setNewComment] = useState('');
@@ -75,6 +75,12 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
   const [conflictError, setConflictError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Assignment & Task Editing Guard:
+  // Regular employees (Tier 1) can only edit, change status, priority, or deadline on tasks assigned to themselves.
+  const isAssignedToCurrentUser = Boolean(user?.id && ticket?.assigneeId === user.id);
+  const isHigherAuthority = roleTier >= 2;
+  const canEditTask = isHigherAuthority || isAssignedToCurrentUser || (!ticket?.assigneeId && ticket?.reporterId === user?.id);
 
   const isDeadlineLocked = Boolean(
     ticket?.dueDate &&
@@ -113,7 +119,7 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
 
     if (
       confirm(
-        `Are you sure you want to delete task ${ticket?.ticketKey} ("${ticket?.title}")?\n\nThis will remove all associated comments, dependencies, and attachments. This action cannot be undone.`
+        `Are you sure you want to delete task ${ticket?.displayKey || ticket?.ticketKey} ("${ticket?.title}")?\n\nThis will remove all associated comments, dependencies, and attachments. This action cannot be undone.`
       )
     ) {
       setIsDeleting(true);
@@ -399,7 +405,7 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
         <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40">
           <div className="flex items-center gap-3">
             <span className="font-mono text-xs font-bold text-slate-500 dark:text-slate-400">
-              {ticket.ticketKey}
+              {ticket.displayKey || ticket.ticketKey}
             </span>
             <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-mono text-slate-600 dark:text-slate-300">
               v{ticket.lockVersion}
@@ -471,6 +477,16 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
           <div className="p-3 mx-6 mt-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200 text-xs flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
             <span>{conflictError} Please refresh to see the latest version.</span>
+          </div>
+        )}
+
+        {/* Read-Only Restriction Alert for Employees */}
+        {!canEditTask && (
+          <div className="p-3 mx-6 mt-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-200 text-xs flex items-center gap-2">
+            <Lock className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>
+              <strong>Read-Only Mode:</strong> This task is assigned to {ticket?.assignee?.fullName || 'another team member'}. Only the assigned person or higher authorities can edit or update status, priority, or deadline.
+            </span>
           </div>
         )}
 
@@ -1161,8 +1177,13 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
               <select
                 value={ticket.status}
                 onChange={(e) => statusMutation.mutate(e.target.value as Ticket['status'])}
-                disabled={statusMutation.isPending}
-                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 shadow-2xs"
+                disabled={!canEditTask || statusMutation.isPending}
+                title={!canEditTask ? 'Only assigned person or higher authorities can change status' : undefined}
+                className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-semibold focus:outline-none shadow-2xs ${
+                  !canEditTask
+                    ? 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                    : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:border-blue-600 cursor-pointer'
+                }`}
               >
                 <option value="TODO">To Do</option>
                 <option value="PENDING_APPROVAL">Pending Approval</option>
@@ -1179,8 +1200,13 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
               <select
                 value={ticket.priority}
                 onChange={(e) => priorityMutation.mutate(e.target.value as Ticket['priority'])}
-                disabled={priorityMutation.isPending}
-                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 shadow-2xs"
+                disabled={!canEditTask || priorityMutation.isPending}
+                title={!canEditTask ? 'Only assigned person or higher authorities can change priority' : undefined}
+                className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-semibold focus:outline-none shadow-2xs ${
+                  !canEditTask
+                    ? 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                    : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:border-blue-600 cursor-pointer'
+                }`}
               >
                 <option value="LOW">Low</option>
                 <option value="MEDIUM">Medium</option>
@@ -1197,8 +1223,13 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
               <select
                 value={ticket.assigneeId || ''}
                 onChange={(e) => assigneeMutation.mutate(e.target.value || null)}
-                disabled={assigneeMutation.isPending}
-                className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600 shadow-2xs"
+                disabled={(!isHigherAuthority && ticket.assigneeId !== null) || assigneeMutation.isPending}
+                title={!isHigherAuthority && ticket.assigneeId !== null ? 'Only higher authorities can reassign tasks' : undefined}
+                className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-semibold focus:outline-none shadow-2xs ${
+                  !isHigherAuthority && ticket.assigneeId !== null
+                    ? 'border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 cursor-not-allowed'
+                    : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:border-blue-600 cursor-pointer'
+                }`}
               >
                 <option value="">Unassigned</option>
                 {availableUsers.map((u) => (
@@ -1215,7 +1246,11 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
                 <label className="text-slate-500 dark:text-slate-400 font-medium flex items-center gap-1">
                   <Calendar className="h-3 w-3 text-blue-500" /> Deadline
                 </label>
-                {isDeadlineLocked ? (
+                {!canEditTask ? (
+                  <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                    <Lock className="h-3 w-3" /> Read-Only
+                  </span>
+                ) : isDeadlineLocked ? (
                   <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
                     <Lock className="h-3 w-3" /> Locked
                   </span>
@@ -1232,15 +1267,24 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
                   const val = e.target.value;
                   dueDateMutation.mutate(val ? new Date(val).toISOString() : null);
                 }}
-                disabled={isDeadlineLocked || dueDateMutation.isPending}
+                disabled={!canEditTask || isDeadlineLocked || dueDateMutation.isPending}
                 className={`w-full px-2.5 py-1.5 rounded-lg border text-xs font-semibold focus:outline-none shadow-2xs ${
-                  isDeadlineLocked
+                  !canEditTask || isDeadlineLocked
                     ? 'border-amber-300 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 cursor-not-allowed opacity-80'
                     : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:border-blue-600'
                 }`}
               />
 
-              {isDeadlineLocked && (
+              {!canEditTask && (
+                <div className="mt-1.5 p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-600 dark:text-slate-400 flex items-start gap-1.5">
+                  <Lock className="h-3.5 w-3.5 shrink-0 mt-0.5 text-slate-500" />
+                  <div>
+                    <span className="font-semibold">Assigned Task:</span> Only {ticket.assignee?.fullName || 'assignee'} or higher authorities can change this deadline.
+                  </div>
+                </div>
+              )}
+
+              {canEditTask && isDeadlineLocked && (
                 <div className="mt-1.5 p-2 rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-200 flex items-start gap-1.5">
                   <Lock className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
                   <div>
@@ -1249,7 +1293,7 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
                 </div>
               )}
 
-              {!isDeadlineLocked && (
+              {canEditTask && !isDeadlineLocked && (
                 <div className="flex items-center gap-1 mt-1.5">
                   <button
                     type="button"

@@ -1287,7 +1287,7 @@ describe('CoreTrack API Tests', () => {
 
     // Mock provider so sending succeeds without real SMTP connection
     const mockTransporter = {
-      name: 'LOCAL' as const,
+      name: 'RESEND' as const,
       priority: 1,
       from: 'CoreTrack Notifications <notifications@coretrack.internal>',
       transporter: {
@@ -1595,6 +1595,235 @@ describe('CoreTrack API Tests', () => {
     });
     expect(empDeleteOwnRes.statusCode).toBe(200);
     expect(empDeleteOwnRes.json().message).toContain('deleted successfully');
+
+    await app.close();
+  });
+
+  it('Tier 10: Deadline & SLA Background Scheduler & Full Overdue Escalation', async () => {
+    const app = await buildApp();
+
+    // 1. Get scheduler status
+    const getRes = await app.inject({
+      method: 'GET',
+      url: '/api/v1/automation/scheduler',
+    });
+    expect(getRes.statusCode).toBe(200);
+    const initialStatus = getRes.json().data;
+    expect(initialStatus).toBeDefined();
+    expect(typeof initialStatus.intervalMinutes).toBe('number');
+
+    // 2. Configure scheduler (adjust interval and pause/resume)
+    const updateRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/automation/scheduler',
+      headers: { 'x-user-email': 'admin@coretrack.internal' },
+      payload: {
+        isActive: true,
+        intervalMinutes: 15,
+      },
+    });
+    expect(updateRes.statusCode).toBe(200);
+    const updatedStatus = updateRes.json().data;
+    expect(updatedStatus.isActive).toBe(true);
+    expect(updatedStatus.intervalMinutes).toBe(15);
+    expect(updatedStatus.nextRunAt).toBeDefined();
+
+    // 3. Verify non-manager / employee is forbidden from changing scheduler config
+    const empConfigRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/automation/scheduler',
+      headers: { 'x-user-email': 'employee@coretrack.internal' },
+      payload: {
+        intervalMinutes: 5,
+      },
+    });
+    expect(empConfigRes.statusCode).toBe(403);
+
+    // 4. Test Overdue Full Escalation: Create an overdue task past deadline
+    const proj = await db.query.projects.findFirst({ where: eq(projects.key, 'CORE') });
+    const pastDueDate = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+    const overdueTicketRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tickets',
+      headers: { 'x-user-email': 'admin@coretrack.internal' },
+      payload: {
+        projectId: proj!.id,
+        ticketType: 'BUG',
+        title: 'Critical Regression in Caching Layer',
+        description: 'Overdue bug awaiting full escalation',
+        priority: 'MEDIUM',
+        status: 'IN_PROGRESS',
+        dueDate: pastDueDate,
+      },
+    });
+    expect(overdueTicketRes.statusCode).toBe(201);
+    const createdKey = overdueTicketRes.json().data.ticketKey;
+
+    // 5. Trigger immediate scan via scheduler endpoint
+    const scanTriggerRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/automation/scheduler',
+      headers: { 'x-user-email': 'admin@coretrack.internal' },
+      payload: {
+        runImmediately: true,
+      },
+    });
+    expect(scanTriggerRes.statusCode).toBe(200);
+
+    // 6. Verify ticket was escalated to URGENT
+    const fetchEscalatedTicketRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/tickets/${createdKey}`,
+    });
+    expect(fetchEscalatedTicketRes.statusCode).toBe(200);
+    const escalatedTicket = fetchEscalatedTicketRes.json().data;
+    expect(escalatedTicket.priority).toBe('URGENT');
+    expect(escalatedTicket.lastOverdueNotifiedAt).toBeDefined();
+
+    // 7. Verify automated internal audit comment was posted
+    const commentsRes = await app.inject({
+      method: 'GET',
+      url: `/api/v1/tickets/${createdKey}/comments`,
+    });
+    expect(commentsRes.statusCode).toBe(200);
+    const comments = commentsRes.json().data;
+    const escalationComment = comments.find((c: any) => c.body.includes('Automated Escalation'));
+    expect(escalationComment).toBeDefined();
+    expect(escalationComment.visibilityScope).toBe('INTERNAL_ONLY');
+
+    await app.close();
+  });
+
+  it('Tier 11: Task Editing Permission - Only Assigned Person or Higher Authorities Can Edit Tasks', async () => {
+    const app = await buildApp();
+
+    const proj = await db.query.projects.findFirst({ where: eq(projects.key, 'CORE') });
+    const engineer = await db.query.users.findFirst({ where: eq(users.email, 'engineer@coretrack.internal') });
+    const employee = await db.query.users.findFirst({ where: eq(users.email, 'employee@coretrack.internal') });
+    const admin = await db.query.users.findFirst({ where: eq(users.email, 'admin@coretrack.internal') });
+
+    expect(proj).toBeDefined();
+    expect(engineer).toBeDefined();
+    expect(employee).toBeDefined();
+    expect(admin).toBeDefined();
+
+    // 1. Admin creates Task A assigned to Engineer
+    const taskARes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tickets',
+      headers: { 'x-user-email': 'admin@coretrack.internal' },
+      payload: {
+        projectId: proj!.id,
+        ticketType: 'TASK',
+        title: 'Backend Auth Refactor',
+        description: 'Assigned to Engineer',
+        priority: 'MEDIUM',
+        status: 'TODO',
+        assigneeId: engineer!.id,
+      },
+    });
+    expect(taskARes.statusCode).toBe(201);
+    const taskA = taskARes.json().data;
+
+    // 2. Employee (Tier 1) attempts to update Task A assigned to Engineer -> Expect 403 ASSIGNED_PERSON_ONLY
+    const empEditTaskARes = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/tickets/${taskA.ticketKey}`,
+      headers: { 'x-user-email': 'employee@coretrack.internal' },
+      payload: {
+        status: 'DONE',
+        lockVersion: taskA.lockVersion,
+      },
+    });
+    expect(empEditTaskARes.statusCode).toBe(403);
+    const empEditError = empEditTaskARes.json();
+    expect(empEditError.error).toBe('ASSIGNED_PERSON_ONLY');
+
+    // 3. Employee attempts to change priority or deadline of Task A -> Expect 403
+    const empPriorityRes = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/tickets/${taskA.ticketKey}`,
+      headers: { 'x-user-email': 'employee@coretrack.internal' },
+      payload: {
+        priority: 'URGENT',
+        lockVersion: taskA.lockVersion,
+      },
+    });
+    expect(empPriorityRes.statusCode).toBe(403);
+
+    // 4. Admin creates Task B assigned to Employee
+    const taskBRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tickets',
+      headers: { 'x-user-email': 'admin@coretrack.internal' },
+      payload: {
+        projectId: proj!.id,
+        ticketType: 'TASK',
+        title: 'Frontend Button Polish',
+        description: 'Assigned to Employee',
+        priority: 'LOW',
+        status: 'TODO',
+        assigneeId: employee!.id,
+      },
+    });
+    expect(taskBRes.statusCode).toBe(201);
+    const taskB = taskBRes.json().data;
+
+    // 5. Employee updates their OWN task (Task B) -> Expect 200 OK
+    const empSelfUpdateRes = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/tickets/${taskB.ticketKey}`,
+      headers: { 'x-user-email': 'employee@coretrack.internal' },
+      payload: {
+        status: 'IN_PROGRESS',
+        priority: 'MEDIUM',
+        lockVersion: taskB.lockVersion,
+      },
+    });
+    expect(empSelfUpdateRes.statusCode).toBe(200);
+    const updatedTaskB = empSelfUpdateRes.json().data;
+    expect(updatedTaskB.status).toBe('IN_PROGRESS');
+    expect(updatedTaskB.priority).toBe('MEDIUM');
+
+    // 6. Higher authority (Admin Tier 5) updates Task B -> Expect 200 OK
+    const adminUpdateTaskBRes = await app.inject({
+      method: 'PATCH',
+      url: `/api/v1/tickets/${taskB.ticketKey}`,
+      headers: { 'x-user-email': 'admin@coretrack.internal' },
+      payload: {
+        status: 'IN_REVIEW',
+        lockVersion: updatedTaskB.lockVersion,
+      },
+    });
+    expect(adminUpdateTaskBRes.statusCode).toBe(200);
+    expect(adminUpdateTaskBRes.json().data.status).toBe('IN_REVIEW');
+
+    // 7. Bulk Update: Employee attempts to bulk update [taskA, taskB] -> Expect 403
+    const empBulkForbiddenRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tickets/bulk',
+      headers: { 'x-user-email': 'employee@coretrack.internal' },
+      payload: {
+        ticketKeys: [taskA.ticketKey, taskB.ticketKey],
+        status: 'DONE',
+      },
+    });
+    expect(empBulkForbiddenRes.statusCode).toBe(403);
+    expect(empBulkForbiddenRes.json().error).toBe('ASSIGNED_PERSON_ONLY');
+
+    // 8. Bulk Update: Employee bulk updates only their own tasks [taskB] -> Expect 200 OK
+    const empBulkSuccessRes = await app.inject({
+      method: 'POST',
+      url: '/api/v1/tickets/bulk',
+      headers: { 'x-user-email': 'employee@coretrack.internal' },
+      payload: {
+        ticketKeys: [taskB.ticketKey],
+        status: 'DONE',
+      },
+    });
+    expect(empBulkSuccessRes.statusCode).toBe(200);
+    expect(empBulkSuccessRes.json().success).toBe(true);
 
     await app.close();
   });

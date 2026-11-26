@@ -19,8 +19,14 @@ import {
   fetchProjectGithubConfig,
   saveProjectGithubConfig,
   syncProjectGithub,
+  fetchTeams,
+  updateProjectTeams,
+  createTicket,
   ProjectMilestone,
+  Team,
 } from '../../../lib/api';
+import { CreateTicketModal } from '../../../components/kanban/CreateTicketModal';
+import { ProjectSummaryCard } from '../../../components/projects/ProjectSummaryCard';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { Permissions } from '../../../lib/permissions';
 import {
@@ -44,6 +50,7 @@ import {
   GitPullRequest,
   RefreshCw,
   Lock,
+  UsersRound,
 } from 'lucide-react';
 
 export default function ProjectDetailPage() {
@@ -65,11 +72,20 @@ export default function ProjectDetailPage() {
   const [isAddMilestoneOpen, setIsAddMilestoneOpen] = useState(false);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isAssignTeamsOpen, setIsAssignTeamsOpen] = useState(false);
+  const [isCreateTaskOpen, setIsCreateTaskOpen] = useState(false);
+  const [createTaskTeamId, setCreateTaskTeamId] = useState<string | undefined>(undefined);
+  const [selectedTaskTeamFilter, setSelectedTaskTeamFilter] = useState<string>('ALL');
 
   // Queries
   const { data: project, isLoading, error } = useQuery({
     queryKey: ['project', projectKey],
     queryFn: () => fetchProjectByKey(projectKey),
+  });
+
+  const { data: allTeams = [] } = useQuery<Team[]>({
+    queryKey: ['teams'],
+    queryFn: fetchTeams,
   });
 
   const { data: availableUsers = [] } = useQuery({
@@ -82,31 +98,7 @@ export default function ProjectDetailPage() {
     queryFn: () => fetchRoles(),
   });
 
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center h-full bg-[#F5F6F8] dark:bg-[#111318]">
-        <div className="text-xs text-slate-400 font-medium animate-pulse">Loading project details...</div>
-      </div>
-    );
-  }
-
-  if (error || !project) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center h-full bg-[#F5F6F8] dark:bg-[#111318] p-6">
-        <AlertTriangle className="h-10 w-10 text-rose-500 mb-3" />
-        <h2 className="text-base font-bold text-slate-800 dark:text-slate-200">Project Not Found</h2>
-        <p className="text-xs text-slate-400 mt-1 mb-4">The project &apos;{projectKey}&apos; does not exist or you do not have permission to view it.</p>
-        <Link
-          href="/projects"
-          className="px-4 py-2 rounded-xl bg-blue-600 text-white font-semibold text-xs shadow-xs"
-        >
-          Return to Projects Portfolio
-        </Link>
-      </div>
-    );
-  }
-
-  const isAssignedPM = (roleTier >= 3) && currentUser && project.projectManagerId === currentUser.id;
+  const isAssignedPM = (roleTier >= 3) && !!currentUser && project?.projectManagerId === currentUser.id;
   const canManageProject = (roleTier >= 3) && (isOrgAdmin || hasPermission(Permissions.PROJECT_EDIT) || isAssignedPM);
   const canManageMembers = (roleTier >= 3) && (isOrgAdmin || hasPermission(Permissions.MEMBER_MANAGE) || isAssignedPM);
   const canDeleteProject = isOrgAdmin || roleTier >= 4 || hasPermission(Permissions.PROJECT_DELETE);
@@ -140,6 +132,30 @@ export default function ProjectDetailPage() {
       deleteProjectMutation.mutate();
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center h-full bg-[#F5F6F8] dark:bg-[#111318]">
+        <div className="text-xs text-slate-400 font-medium animate-pulse">Loading project details...</div>
+      </div>
+    );
+  }
+
+  if (error || !project) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center h-full bg-[#F5F6F8] dark:bg-[#111318] p-6">
+        <AlertTriangle className="h-10 w-10 text-rose-500 mb-3" />
+        <h2 className="text-base font-bold text-slate-800 dark:text-slate-200">Project Not Found</h2>
+        <p className="text-xs text-slate-400 mt-1 mb-4">The project &apos;{projectKey}&apos; does not exist or you do not have permission to view it.</p>
+        <Link
+          href="/projects"
+          className="px-4 py-2 rounded-xl bg-blue-600 text-white font-semibold text-xs shadow-xs"
+        >
+          Return to Projects Portfolio
+        </Link>
+      </div>
+    );
+  }
 
   const progress = project.progressPercentage ?? 0;
   const status = project.computedStatus || project.status || 'NOT_STARTED';
@@ -243,16 +259,24 @@ export default function ProjectDetailPage() {
 
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2.5 mb-1.5">
+              <div className="flex flex-wrap items-center gap-2.5 mb-1.5">
                 <span className="px-2.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 font-mono font-bold text-xs border border-blue-200 dark:border-blue-900">
                   {project.key}
                 </span>
                 {getStatusBadge(status)}
-                {project.primaryTeam && (
-                  <span className="text-xs text-slate-400 font-medium">
-                    {project.primaryTeam.name}
+                {(project.assignedTeams && project.assignedTeams.length > 0
+                  ? project.assignedTeams
+                  : project.primaryTeam
+                    ? [project.primaryTeam]
+                    : []
+                ).map((t) => (
+                  <span
+                    key={t.id}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[11px] font-medium border border-slate-200 dark:border-slate-700"
+                  >
+                    {t.name}
                   </span>
-                )}
+                ))}
               </div>
               <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
                 {project.name}
@@ -321,6 +345,9 @@ export default function ProjectDetailPage() {
         {/* TAB 1: OVERVIEW & PERSONNEL */}
         {activeTab === 'OVERVIEW' && (
           <div className="space-y-6">
+            {/* Project Summary (Completed, Blockers, Planned + Optional AI Brief) */}
+            <ProjectSummaryCard projectKey={project.key} />
+
             {/* Key Personnel Cards */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {/* Project Manager Card */}
@@ -369,106 +396,243 @@ export default function ProjectDetailPage() {
                 )}
               </div>
 
-              {/* Primary Team Card */}
+              {/* Assigned Teams Card */}
               <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 p-5 shadow-2xs">
                 <div className="flex items-center justify-between text-xs text-slate-400 font-semibold mb-3">
-                  <span>Primary Assigned Team</span>
-                  <Users className="h-4 w-4 text-emerald-500" />
-                </div>
-                {project.primaryTeam ? (
-                  <div>
-                    <div className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                      {project.primaryTeam.name} ({project.primaryTeam.keyPrefix})
-                    </div>
-                    <div className="text-xs text-slate-400 mt-1">
-                      Lead: {project.primaryTeam.lead?.fullName || 'Unassigned'}
-                    </div>
+                  <span>Assigned Teams</span>
+                  <div className="flex items-center gap-2">
+                    {canManageMembers && (
+                      <button
+                        type="button"
+                        onClick={() => setIsAssignTeamsOpen(true)}
+                        className="text-[11px] font-semibold text-blue-600 hover:underline cursor-pointer"
+                      >
+                        Manage
+                      </button>
+                    )}
+                    <Users className="h-4 w-4 text-emerald-500" />
                   </div>
-                ) : (
-                  <div className="text-xs text-slate-400 italic">No Primary Team linked</div>
-                )}
+                </div>
+                {(() => {
+                  const teamsList =
+                    project.assignedTeams && project.assignedTeams.length > 0
+                      ? project.assignedTeams
+                      : project.primaryTeam
+                        ? [project.primaryTeam]
+                        : [];
+                  if (teamsList.length === 0) {
+                    return <div className="text-xs text-slate-400 italic">No teams assigned yet</div>;
+                  }
+                  return (
+                    <div className="space-y-1.5">
+                      {teamsList.map((t) => (
+                        <div key={t.id} className="flex items-center justify-between gap-2 text-xs">
+                          <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                            {t.name} <span className="font-mono text-[10px] text-slate-400">({t.keyPrefix})</span>
+                          </span>
+                          <span className="text-[11px] text-slate-400 shrink-0">
+                            {t.members?.length ?? 0} members
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
-            {/* Allocated Members Table */}
-            <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 p-5 shadow-2xs">
-              <div className="flex items-center justify-between mb-4">
+            {/* Allocated Personnel & Members (Categorized by Team) */}
+            <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 p-5 shadow-2xs space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                     Allocated Personnel & Members
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Team leads, engineers, and employees assigned to this project
+                    Team members and allocated personnel categorized by assigned teams
                   </p>
                 </div>
 
                 {canManageMembers && (
-                  <button
-                    onClick={() => setIsAddMemberOpen(true)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition cursor-pointer"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
-                    <span>Allocate Member</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIsAssignTeamsOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs transition cursor-pointer"
+                    >
+                      <UsersRound className="h-3.5 w-3.5" />
+                      <span>Assign Teams</span>
+                    </button>
+                    <button
+                      onClick={() => setIsAddMemberOpen(true)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition cursor-pointer"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Allocate Member</span>
+                    </button>
+                  </div>
                 )}
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-semibold uppercase text-[10px]">
-                      <th className="py-2.5 px-3">Member</th>
-                      <th className="py-2.5 px-3">Email</th>
-                      <th className="py-2.5 px-3">Project Role</th>
-                      {canManageMembers && <th className="py-2.5 px-3 text-right">Actions</th>}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium text-slate-700 dark:text-slate-300">
-                    {project.members.map((m) => (
-                      <tr key={m.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                        <td className="py-3 px-3 flex items-center gap-2.5 font-bold text-slate-900 dark:text-slate-100">
-                          <div className="h-7 w-7 rounded-full bg-slate-200 dark:bg-slate-700 text-[11px] font-bold flex items-center justify-center shrink-0">
-                            {m.user.fullName[0]}
+              {/* Categorized Teams & Their Members */}
+              {(() => {
+                const teamsList =
+                  project.assignedTeams && project.assignedTeams.length > 0
+                    ? project.assignedTeams
+                    : project.primaryTeam
+                      ? [project.primaryTeam]
+                      : [];
+
+                return (
+                  <div className="space-y-4">
+                    {teamsList.map((team) => {
+                      const members = team.members || [];
+                      return (
+                        <div
+                          key={team.id}
+                          className="rounded-xl border border-slate-200/80 dark:border-slate-800 overflow-hidden"
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200/80 dark:border-slate-800">
+                            <div className="flex items-center gap-2">
+                              <UsersRound className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                              <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                                {team.name}
+                              </span>
+                              <span className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-[10px] font-semibold text-slate-500">
+                                {team.keyPrefix}
+                              </span>
+                              <span className="text-[11px] text-slate-400">
+                                · {members.length} member{members.length !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                            {team.lead && (
+                              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                Lead: <strong className="text-slate-700 dark:text-slate-200">{team.lead.fullName}</strong>
+                              </span>
+                            )}
                           </div>
-                          <span>{m.user.fullName}</span>
-                        </td>
-                        <td className="py-3 px-3 text-slate-400">{m.user.email}</td>
-                        <td className="py-3 px-3">
-                          <span
-                            className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white shadow-2xs"
-                            style={{ backgroundColor: m.role.color || '#4F46E5' }}
-                          >
-                            {m.role.name}
-                          </span>
-                        </td>
-                        {canManageMembers && (
-                          <td className="py-3 px-3 text-right">
-                            <button
-                              onClick={async () => {
-                                if (confirm(`Remove ${m.user.fullName} from ${project.name}?`)) {
-                                  await removeProjectMember(project.key, m.userId);
-                                  queryClient.invalidateQueries({ queryKey: ['project', projectKey] });
-                                }
-                              }}
-                              className="text-slate-400 hover:text-rose-600 p-1 rounded-md transition cursor-pointer"
-                              title="Remove member"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                    {project.members.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="py-6 text-center text-slate-400 italic">
-                          No specific members allocated to this project yet.
-                        </td>
-                      </tr>
+
+                          {members.length > 0 ? (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-left text-xs">
+                                <thead>
+                                  <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-semibold uppercase text-[10px]">
+                                    <th className="py-2 px-4">Member Name</th>
+                                    <th className="py-2 px-4">Email</th>
+                                    <th className="py-2 px-4">Team Role</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium text-slate-700 dark:text-slate-300">
+                                  {members.map((tm) => {
+                                    const fullName = tm.user?.fullName || 'Unknown User';
+                                    const email = tm.user?.email || '—';
+                                    const isLead = tm.role === 'LEAD' || team.lead?.id === tm.userId;
+                                    return (
+                                      <tr key={tm.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                                        <td className="py-2.5 px-4 flex items-center gap-2.5 font-semibold text-slate-900 dark:text-slate-100">
+                                          <div className="h-6 w-6 rounded-full bg-slate-200 dark:bg-slate-700 text-[10px] font-bold flex items-center justify-center shrink-0">
+                                            {fullName[0]}
+                                          </div>
+                                          <span>{fullName}</span>
+                                        </td>
+                                        <td className="py-2.5 px-4 text-slate-400 font-mono text-[11px]">{email}</td>
+                                        <td className="py-2.5 px-4">
+                                          <span
+                                            className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                              isLead
+                                                ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-800'
+                                                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                            }`}
+                                          >
+                                            {isLead ? 'Team Lead' : 'Member'}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <div className="py-4 px-4 text-xs text-slate-400 italic">
+                              No members in this team yet.
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    {teamsList.length === 0 && (
+                      <div className="py-6 text-center rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-xs text-slate-400">
+                        No teams assigned to this project yet.
+                        {canManageMembers && ' Click "Assign Teams" above to link one or more teams.'}
+                      </div>
                     )}
-                  </tbody>
-                </table>
-              </div>
+                  </div>
+                );
+              })()}
+
+              {/* Direct Project Member Allocations */}
+              {project.members.length > 0 && (
+                <div className="rounded-xl border border-slate-200/80 dark:border-slate-800 overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200/80 dark:border-slate-800">
+                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                      Direct Project Allocations
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      {project.members.length} member{project.members.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-semibold uppercase text-[10px]">
+                          <th className="py-2 px-4">Member</th>
+                          <th className="py-2 px-4">Email</th>
+                          <th className="py-2 px-4">Project Role</th>
+                          {canManageMembers && <th className="py-2 px-4 text-right">Actions</th>}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium text-slate-700 dark:text-slate-300">
+                        {project.members.map((m) => (
+                          <tr key={m.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                            <td className="py-2.5 px-4 flex items-center gap-2.5 font-semibold text-slate-900 dark:text-slate-100">
+                              <div className="h-6 w-6 rounded-full bg-slate-200 dark:bg-slate-700 text-[10px] font-bold flex items-center justify-center shrink-0">
+                                {m.user.fullName[0]}
+                              </div>
+                              <span>{m.user.fullName}</span>
+                            </td>
+                            <td className="py-2.5 px-4 text-slate-400 font-mono text-[11px]">{m.user.email}</td>
+                            <td className="py-2.5 px-4">
+                              <span
+                                className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-bold text-white shadow-2xs"
+                                style={{ backgroundColor: m.role.color || '#4F46E5' }}
+                              >
+                                {m.role.name}
+                              </span>
+                            </td>
+                            {canManageMembers && (
+                              <td className="py-2.5 px-4 text-right">
+                                <button
+                                  onClick={async () => {
+                                    if (confirm(`Remove ${m.user.fullName} from ${project.name}?`)) {
+                                      await removeProjectMember(project.key, m.userId);
+                                      queryClient.invalidateQueries({ queryKey: ['project', projectKey] });
+                                    }
+                                  }}
+                                  className="text-slate-400 hover:text-rose-600 p-1 rounded-md transition cursor-pointer"
+                                  title="Remove member"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -618,55 +782,172 @@ export default function ProjectDetailPage() {
               ))}
             </div>
 
-            {/* Tasks list preview */}
-            <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 p-5 shadow-2xs space-y-3">
-              <div className="flex items-center justify-between">
+            {/* Tasks list preview — isolated & categorized by team */}
+            <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 p-5 shadow-2xs space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
                     Project Tasks Roster
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Active deliverables assigned to platform teams
+                    Team-isolated deliverables — members only see tasks belonging to their own team
                   </p>
                 </div>
-                <Link
-                  href={`/?projectKey=${project.key}`}
-                  className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:underline"
-                >
-                  <span>Open Kanban Board</span>
-                  <ArrowRight className="h-3.5 w-3.5" />
-                </Link>
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCreateTaskTeamId(selectedTaskTeamFilter !== 'ALL' && selectedTaskTeamFilter !== 'GENERAL' ? selectedTaskTeamFilter : undefined);
+                      setIsCreateTaskOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition cursor-pointer"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    <span>New Team Task</span>
+                  </button>
+                  <Link
+                    href={`/?projectKey=${project.key}`}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:underline"
+                  >
+                    <span>Open Kanban Board</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </div>
               </div>
 
-              <div className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {project.tickets.map((t) => (
-                  <div key={t.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="font-mono font-bold text-[11px] text-blue-600 dark:text-blue-400 shrink-0">
-                        {t.ticketKey}
-                      </span>
-                      <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
-                        {t.title}
-                      </span>
-                    </div>
+              {/* Team filter pills */}
+              {(() => {
+                const assignedTeamsList =
+                  project.assignedTeams && project.assignedTeams.length > 0
+                    ? project.assignedTeams
+                    : project.primaryTeam
+                      ? [project.primaryTeam]
+                      : [];
+                const visibleTeamGroups = new Map<string, { id: string; name: string; keyPrefix?: string; items: typeof project.tickets }>();
+                for (const t of project.tickets) {
+                  const key = t.team?.id || 'GENERAL';
+                  if (!visibleTeamGroups.has(key)) {
+                    visibleTeamGroups.set(key, {
+                      id: key,
+                      name: t.team ? t.team.name : 'General / Unassigned Team',
+                      keyPrefix: t.team?.keyPrefix,
+                      items: [],
+                    });
+                  }
+                  visibleTeamGroups.get(key)!.items.push(t);
+                }
 
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-400">
-                        {t.status}
-                      </span>
-                      <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold text-slate-500">
-                        {t.priority}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                // Ensure assigned teams with 0 tasks still appear for managers/members of those teams
+                for (const team of assignedTeamsList) {
+                  if (!visibleTeamGroups.has(team.id)) {
+                    const isMember = currentUser && (team.lead?.id === currentUser.id || team.members?.some((m) => m.userId === currentUser.id));
+                    if (canManageProject || isMember) {
+                      visibleTeamGroups.set(team.id, {
+                        id: team.id,
+                        name: team.name,
+                        keyPrefix: team.keyPrefix,
+                        items: [],
+                      });
+                    }
+                  }
+                }
 
-                {project.tickets.length === 0 && (
-                  <div className="py-6 text-center text-xs text-slate-400 italic">
-                    No tasks created for this project yet.
-                  </div>
-                )}
-              </div>
+                const groups = Array.from(visibleTeamGroups.values());
+                const filteredGroups = selectedTaskTeamFilter === 'ALL'
+                  ? groups
+                  : groups.filter((g) => g.id === selectedTaskTeamFilter);
+
+                return (
+                  <>
+                    {groups.length > 1 && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTaskTeamFilter('ALL')}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+                            selectedTaskTeamFilter === 'ALL'
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                          }`}
+                        >
+                          All Visible ({project.tickets.length})
+                        </button>
+                        {groups.map((g) => (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => setSelectedTaskTeamFilter(g.id)}
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition cursor-pointer ${
+                              selectedTaskTeamFilter === g.id
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                            }`}
+                          >
+                            {g.name} ({g.items.length})
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="space-y-4">
+                      {filteredGroups.map((group) => (
+                        <div key={group.id} className="rounded-xl border border-slate-200/80 dark:border-slate-800 overflow-hidden">
+                          <div className="flex items-center justify-between px-4 py-2 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200/80 dark:border-slate-800">
+                            <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
+                              <UsersRound className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                              <span>{group.name}</span>
+                              {group.keyPrefix && (
+                                <span className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-mono text-[10px] text-slate-500">
+                                  {group.keyPrefix}
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[11px] text-slate-400">
+                              {group.items.length} task{group.items.length !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+
+                          <div className="divide-y divide-slate-100 dark:divide-slate-800/60 px-4">
+                            {group.items.map((t) => (
+                              <div key={t.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <span className="font-mono font-bold text-[11px] text-blue-600 dark:text-blue-400 shrink-0">
+                                    {t.displayKey || t.ticketKey}
+                                  </span>
+                                  <span className="font-medium text-slate-800 dark:text-slate-200 truncate">
+                                    {t.title}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0">
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-bold text-slate-600 dark:text-slate-400">
+                                    {t.status}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold text-slate-500">
+                                    {t.priority}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+
+                            {group.items.length === 0 && (
+                              <div className="py-4 text-center text-xs text-slate-400 italic">
+                                No tasks for this team yet.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+
+                      {filteredGroups.length === 0 && (
+                        <div className="py-6 text-center text-xs text-slate-400 italic">
+                          No tasks created for this project yet.
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -764,6 +1045,44 @@ export default function ProjectDetailPage() {
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['project', projectKey] });
             setIsAddMemberOpen(false);
+          }}
+        />
+      )}
+
+      {/* ASSIGN MULTIPLE TEAMS MODAL */}
+      {isAssignTeamsOpen && (
+        <AssignTeamsModal
+          isOpen={isAssignTeamsOpen}
+          onClose={() => setIsAssignTeamsOpen(false)}
+          projectKey={project.key}
+          allTeams={allTeams}
+          currentTeamIds={(
+            project.assignedTeams && project.assignedTeams.length > 0
+              ? project.assignedTeams
+              : project.primaryTeam
+                ? [project.primaryTeam]
+                : []
+          ).map((t) => t.id)}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['project', projectKey] });
+            queryClient.invalidateQueries({ queryKey: ['projects'] });
+            setIsAssignTeamsOpen(false);
+          }}
+        />
+      )}
+
+      {/* CREATE TEAM TASK MODAL */}
+      {isCreateTaskOpen && (
+        <CreateTicketModal
+          projectId={project.id}
+          defaultTeamId={createTaskTeamId}
+          isOpen={isCreateTaskOpen}
+          onClose={() => setIsCreateTaskOpen(false)}
+          onSubmit={async (data) => {
+            await createTicket(data);
+            queryClient.invalidateQueries({ queryKey: ['project', projectKey] });
+            queryClient.invalidateQueries({ queryKey: ['tickets'] });
+            setIsCreateTaskOpen(false);
           }}
         />
       )}
@@ -1378,6 +1697,139 @@ function AllocateMemberModal({
             >
               {isSubmitting ? 'Allocating...' : 'Allocate Member'}
             </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------
+// ASSIGN MULTIPLE TEAMS MODAL
+// ----------------------------------------------------
+function AssignTeamsModal({
+  isOpen,
+  onClose,
+  projectKey,
+  allTeams,
+  currentTeamIds,
+  onSuccess,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  projectKey: string;
+  allTeams: Team[];
+  currentTeamIds: string[];
+  onSuccess: () => void;
+}) {
+  const [selectedIds, setSelectedIds] = useState<string[]>(currentTeamIds);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  if (!isOpen) return null;
+
+  const toggleTeam = (teamId: string) => {
+    setSelectedIds((prev) =>
+      prev.includes(teamId) ? prev.filter((id) => id !== teamId) : [...prev, teamId]
+    );
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setErrorMsg(null);
+    try {
+      await updateProjectTeams(projectKey, selectedIds);
+      onSuccess();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to assign teams');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-xl space-y-4">
+        <div>
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+            Assign Teams to Project
+          </h3>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Select one or more teams. Each team&apos;s tasks are isolated from other teams.
+          </p>
+        </div>
+
+        {errorMsg && (
+          <div className="p-2.5 rounded-lg bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-700 dark:text-rose-300">
+            {errorMsg}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
+            {allTeams.map((team) => {
+              const checked = selectedIds.includes(team.id);
+              return (
+                <div
+                  key={team.id}
+                  onClick={() => toggleTeam(team.id)}
+                  className={`flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none transition text-xs ${
+                    checked
+                      ? 'bg-blue-50/70 dark:bg-blue-950/40'
+                      : 'hover:bg-slate-50 dark:hover:bg-slate-800/50'
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                        {team.name}
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[10px] text-slate-500">
+                        {team.keyPrefix}
+                      </span>
+                    </div>
+                    <div className="text-[11px] text-slate-400 mt-0.5">
+                      {team.members?.length ?? 0} member{(team.members?.length ?? 0) !== 1 ? 's' : ''}
+                      {team.lead ? ` · Lead: ${team.lead.fullName}` : ''}
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {}}
+                    className="h-4 w-4 rounded accent-blue-600 cursor-pointer shrink-0"
+                  />
+                </div>
+              );
+            })}
+            {allTeams.length === 0 && (
+              <div className="py-6 text-center text-xs text-slate-400">
+                No teams found. Create teams in the Teams section first.
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+            <span className="text-[11px] text-slate-400">
+              {selectedIds.length} team{selectedIds.length !== 1 ? 's' : ''} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-xs cursor-pointer"
+              >
+                {isSubmitting ? 'Saving...' : 'Save Teams'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

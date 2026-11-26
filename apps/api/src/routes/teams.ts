@@ -13,11 +13,16 @@ import {
   and,
   inArray,
 } from '@coretrack/db';
-import { getCurrentUser } from '../auth/auth.js';
+import { getCurrentUser, getUserRoleTier } from '../auth/auth.js';
 import { Permissions } from '@coretrack/shared';
 
 export const teamRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  async function isUserTeamLead(userId: string): Promise<boolean> {
+    const tierInfo = await getUserRoleTier(userId);
+    return tierInfo.tier === 2 || tierInfo.roleName.toLowerCase().includes('team lead');
+  }
 
   // 1. List Teams with Department, Lead, Members, and Associated Projects
   app.get(
@@ -28,7 +33,8 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ['Teams'],
       },
     },
-    async (_request, reply) => {
+    async (request, reply) => {
+      const caller = await getCurrentUser(request);
       const allTeams = await db.query.teams.findMany({
         with: {
           department: true,
@@ -61,9 +67,20 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
+      // Scope visible teams: non-admin users only see teams they are assigned to
+      let visibleTeams = allTeams;
+      if (caller) {
+        const tierInfo = await getUserRoleTier(caller.id);
+        if (tierInfo.tier < 4) {
+          visibleTeams = allTeams.filter(
+            (t) => t.leadId === caller.id || t.members.some((m) => m.userId === caller.id)
+          );
+        }
+      }
+
       // Get ticket counts for each team
       const teamsWithMetrics = await Promise.all(
-        allTeams.map(async (t) => {
+        visibleTeams.map(async (t) => {
           const memberUserIds = t.members.map((m) => m.userId);
           let assignedTicketsCount = 0;
           if (memberUserIds.length > 0) {
@@ -171,6 +188,22 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
 
       const { name, keyPrefix, departmentId, description, leadId } = request.body;
 
+      if (leadId && !(await isUserTeamLead(leadId))) {
+        return reply.status(400).send({
+          error: 'Only users with the Team Lead role can be assigned as a Team Lead.',
+        });
+      }
+
+      // Check duplicate keyPrefix
+      const existingPrefix = await db.query.teams.findFirst({
+        where: eq(teams.keyPrefix, keyPrefix),
+      });
+      if (existingPrefix) {
+        return reply.status(400).send({
+          error: `A team with prefix '${keyPrefix}' already exists. Please use a different prefix.`,
+        });
+      }
+
       let resolvedDeptId = departmentId;
       if (!resolvedDeptId) {
         const firstDept = await db.query.departments.findFirst();
@@ -234,6 +267,19 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       const { id } = request.params;
       const { name, description, leadId, departmentId } = request.body;
 
+      if (leadId && !(await isUserTeamLead(leadId))) {
+        return reply.status(400).send({
+          error: 'Only users with the Team Lead role can be assigned as a Team Lead.',
+        });
+      }
+
+      const existingTeam = await db.query.teams.findFirst({
+        where: eq(teams.id, id),
+      });
+      if (!existingTeam) {
+        return reply.status(404).send({ error: 'Team not found' });
+      }
+
       const updateData: Record<string, unknown> = {
         updatedAt: new Date(),
       };
@@ -250,6 +296,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
 
       if (!updatedTeam) {
         return reply.status(404).send({ error: 'Team not found' });
+      }
+
+      // If primary lead was changed or cleared, demote the previous primary lead in teamMembers
+      if (leadId !== undefined && existingTeam.leadId && existingTeam.leadId !== leadId) {
+        await db
+          .update(teamMembers)
+          .set({ role: 'MEMBER' })
+          .where(and(eq(teamMembers.teamId, id), eq(teamMembers.userId, existingTeam.leadId)));
       }
 
       if (leadId) {
@@ -333,6 +387,12 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       const { id } = request.params;
       const { userId, role } = request.body;
 
+      if (role === 'LEAD' && !(await isUserTeamLead(userId))) {
+        return reply.status(400).send({
+          error: 'Only users with the Team Lead role can be assigned the LEAD role in a team.',
+        });
+      }
+
       const [member] = await db
         .insert(teamMembers)
         .values({
@@ -367,6 +427,12 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         .delete(teamMembers)
         .where(and(eq(teamMembers.teamId, id), eq(teamMembers.userId, userId)));
 
+      // If the removed user was the team's primary lead, clear teams.leadId
+      await db
+        .update(teams)
+        .set({ leadId: null, updatedAt: new Date() })
+        .where(and(eq(teams.id, id), eq(teams.leadId, userId)));
+
       return reply.send({ message: 'Member removed from team' });
     }
   );
@@ -391,11 +457,37 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       const { id, userId } = request.params;
       const { role } = request.body;
 
+      if (role === 'LEAD' && !(await isUserTeamLead(userId))) {
+        return reply.status(400).send({
+          error: 'Only users with the Team Lead role can be promoted to Team Lead.',
+        });
+      }
+
       const [updated] = await db
         .update(teamMembers)
         .set({ role })
         .where(and(eq(teamMembers.teamId, id), eq(teamMembers.userId, userId)))
         .returning();
+
+      if (!updated) {
+        return reply.status(404).send({ error: 'Team member not found' });
+      }
+
+      // Sync teams.leadId when demoting the primary lead or promoting when no primary lead is set
+      if (role === 'MEMBER') {
+        await db
+          .update(teams)
+          .set({ leadId: null, updatedAt: new Date() })
+          .where(and(eq(teams.id, id), eq(teams.leadId, userId)));
+      } else if (role === 'LEAD') {
+        const team = await db.query.teams.findFirst({ where: eq(teams.id, id) });
+        if (team && !team.leadId) {
+          await db
+            .update(teams)
+            .set({ leadId: userId, updatedAt: new Date() })
+            .where(eq(teams.id, id));
+        }
+      }
 
       return reply.send({ data: updated });
     }

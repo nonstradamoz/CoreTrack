@@ -1,6 +1,7 @@
 import {
   db,
   tickets,
+  ticketComments,
   projects,
   sprints,
   users,
@@ -24,6 +25,7 @@ import {
   sendTaskOverdueEscalationNotification,
   sendProjectOverdueEscalationNotification,
 } from './email.js';
+import { broadcastToProject } from '../ws.js';
 
 export interface DeadlineScanSummary {
   timestamp: string;
@@ -182,13 +184,19 @@ export async function runDeadlineAndEscalationScan(): Promise<DeadlineScanSummar
   }
 
   // =========================================================================
-  // 2. OVERDUE TASK ESCALATION: Unfinished tasks past dueDate (24h cooldown)
+  // 2. OVERDUE TASK & SLA BREACH ESCALATION: Unfinished tasks past dueDate or SLA (24h cooldown)
   // =========================================================================
   const overdueTickets = await db.query.tickets.findMany({
     where: and(
       notInArray(tickets.status, ['DONE', 'CANCELED', 'RESOLVED']),
-      sql`${tickets.dueDate} IS NOT NULL`,
-      lt(tickets.dueDate, now),
+      or(
+        and(sql`${tickets.dueDate} IS NOT NULL`, lt(tickets.dueDate, now)),
+        and(
+          eq(tickets.isSlaPaused, false),
+          sql`${tickets.slaResolutionDueAt} IS NOT NULL`,
+          lt(tickets.slaResolutionDueAt, now)
+        )
+      ),
       or(
         isNull(tickets.lastOverdueNotifiedAt),
         lt(tickets.lastOverdueNotifiedAt, twentyFourHoursAgo)
@@ -204,9 +212,11 @@ export async function runDeadlineAndEscalationScan(): Promise<DeadlineScanSummar
     const project = ticket.project;
     if (!project) continue;
 
+    // 1. Full Escalation: Auto-bump priority to URGENT
     await db
       .update(tickets)
       .set({
+        priority: 'URGENT',
         lastOverdueNotifiedAt: now,
         updatedAt: now,
       })
@@ -214,6 +224,36 @@ export async function runDeadlineAndEscalationScan(): Promise<DeadlineScanSummar
 
     summary.overdueTasksEscalated++;
     summary.details.escalatedTickets.push(ticket.ticketKey);
+
+    // 2. Post automated internal audit comment
+    const targetDeadline = ticket.dueDate || ticket.slaResolutionDueAt || now;
+    const msOverdue = now.getTime() - new Date(targetDeadline).getTime();
+    const daysOverdue = Math.max(1, Math.ceil(msOverdue / (1000 * 60 * 60 * 24)));
+    const systemAuthor =
+      (await db.query.users.findFirst({
+        where: (u, { eq: eqU }) => eqU(u.email, 'admin@coretrack.internal'),
+      })) || (await db.query.users.findFirst());
+
+    if (systemAuthor) {
+      await db.insert(ticketComments).values({
+        ticketId: ticket.id,
+        authorId: systemAuthor.id,
+        visibilityScope: 'INTERNAL_ONLY',
+        body: `⚠️ **Automated Escalation**: This task is overdue by ${daysOverdue} day${daysOverdue > 1 ? 's' : ''}. Priority auto-escalated to **URGENT** and notification dispatched to Project Manager & Assignee.`,
+      });
+    }
+
+    // 3. Broadcast real-time WebSocket update
+    broadcastToProject(project.key, {
+      type: 'TICKET_UPDATED',
+      payload: {
+        id: ticket.id,
+        ticketKey: ticket.ticketKey,
+        priority: 'URGENT',
+        status: ticket.status,
+        lastOverdueNotifiedAt: now,
+      },
+    });
 
     // Hierarchical Escalation: PM + Team Leads
     const recipientMap = new Map<string, { email: string; fullName: string }>();
@@ -247,7 +287,7 @@ export async function runDeadlineAndEscalationScan(): Promise<DeadlineScanSummar
           title: ticket.title,
           status: ticket.status,
           priority: ticket.priority,
-          dueDate: ticket.dueDate!,
+          dueDate: targetDeadline,
         },
         project: {
           id: project.id,
@@ -346,19 +386,58 @@ export async function runDeadlineAndEscalationScan(): Promise<DeadlineScanSummar
     }
   }
 
+  schedulerState.lastRunAt = now.toISOString();
+  schedulerState.lastSummary = summary;
+  if (schedulerState.isActive) {
+    schedulerState.nextRunAt = new Date(Date.now() + schedulerState.intervalMinutes * 60 * 1000).toISOString();
+  }
+
   return summary;
 }
+
+export interface SchedulerState {
+  isActive: boolean;
+  intervalMinutes: number;
+  lastRunAt: string | null;
+  nextRunAt: string | null;
+  lastSummary: DeadlineScanSummary | null;
+}
+
+let schedulerState: SchedulerState = {
+  isActive: false,
+  intervalMinutes: 60,
+  lastRunAt: null,
+  nextRunAt: null,
+  lastSummary: null,
+};
 
 // Background recurring timer handle
 let scannerIntervalHandle: NodeJS.Timeout | null = null;
 
+export function getSchedulerStatus(): SchedulerState {
+  return { ...schedulerState };
+}
+
 export function startDeadlineScheduler(intervalMs = 60 * 60 * 1000) {
-  if (scannerIntervalHandle) return;
-  console.log(`[Deadline Scheduler] Starting recurring background deadline scanner (every ${intervalMs / 1000 / 60}m)`);
-  scannerIntervalHandle = setInterval(() => {
-    runDeadlineAndEscalationScan().catch((err) => {
+  if (scannerIntervalHandle) {
+    clearInterval(scannerIntervalHandle);
+    scannerIntervalHandle = null;
+  }
+  const intervalMinutes = Math.max(1, Math.round(intervalMs / (60 * 1000)));
+  schedulerState.isActive = true;
+  schedulerState.intervalMinutes = intervalMinutes;
+  schedulerState.nextRunAt = new Date(Date.now() + intervalMs).toISOString();
+
+  console.log(`[Deadline Scheduler] Starting recurring background deadline scanner (every ${intervalMinutes}m)`);
+  scannerIntervalHandle = setInterval(async () => {
+    try {
+      const summary = await runDeadlineAndEscalationScan();
+      schedulerState.lastRunAt = new Date().toISOString();
+      schedulerState.lastSummary = summary;
+      schedulerState.nextRunAt = new Date(Date.now() + intervalMs).toISOString();
+    } catch (err) {
       console.error('[Deadline Scheduler] Scan error:', err);
-    });
+    }
   }, intervalMs);
 }
 
@@ -367,4 +446,38 @@ export function stopDeadlineScheduler() {
     clearInterval(scannerIntervalHandle);
     scannerIntervalHandle = null;
   }
+  schedulerState.isActive = false;
+  schedulerState.nextRunAt = null;
+  console.log('[Deadline Scheduler] Background recurring deadline scanner paused.');
+}
+
+export async function updateSchedulerConfig(config: {
+  isActive?: boolean;
+  intervalMinutes?: number;
+  runImmediately?: boolean;
+}): Promise<SchedulerState> {
+  if (config.intervalMinutes !== undefined && config.intervalMinutes >= 1) {
+    schedulerState.intervalMinutes = config.intervalMinutes;
+  }
+
+  if (config.isActive !== undefined) {
+    if (config.isActive) {
+      stopDeadlineScheduler();
+      startDeadlineScheduler(schedulerState.intervalMinutes * 60 * 1000);
+    } else {
+      stopDeadlineScheduler();
+    }
+  } else if (schedulerState.isActive) {
+    // Restart active timer with updated interval
+    stopDeadlineScheduler();
+    startDeadlineScheduler(schedulerState.intervalMinutes * 60 * 1000);
+  }
+
+  if (config.runImmediately) {
+    const summary = await runDeadlineAndEscalationScan();
+    schedulerState.lastRunAt = new Date().toISOString();
+    schedulerState.lastSummary = summary;
+  }
+
+  return getSchedulerStatus();
 }

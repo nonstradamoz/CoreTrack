@@ -15,6 +15,7 @@ import {
   Project,
 } from '../../lib/api';
 import { CreateProjectModal } from '../../components/projects/CreateProjectModal';
+import { ProjectSummaryDrawer } from '../../components/projects/ProjectSummaryCard';
 import { usePermissions } from '../../hooks/usePermissions';
 import { Permissions } from '../../lib/permissions';
 import {
@@ -51,6 +52,7 @@ export default function ProjectsPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [summaryProject, setSummaryProject] = useState<{ key: string; name: string } | null>(null);
 
   const deleteProjectMutation = useMutation({
     mutationFn: (key: string) => deleteProject(key),
@@ -465,6 +467,16 @@ export default function ProjectsPage() {
                         <LayoutGrid className="h-3.5 w-3.5" />
                         <span>Board</span>
                       </Link>
+
+                      <button
+                        type="button"
+                        onClick={() => setSummaryProject({ key: p.key, name: p.name })}
+                        title="View Project Summary (Completed, Blockers, Planned)"
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 transition cursor-pointer"
+                      >
+                        <Sparkles className="h-3.5 w-3.5" />
+                        <span>Summary</span>
+                      </button>
                     </div>
 
                     <div className="flex items-center gap-1">
@@ -534,6 +546,13 @@ export default function ProjectsPage() {
           }}
         />
       )}
+
+      {/* PROJECT SUMMARY DRAWER */}
+      <ProjectSummaryDrawer
+        projectKey={summaryProject?.key ?? null}
+        projectName={summaryProject?.name}
+        onClose={() => setSummaryProject(null)}
+      />
     </div>
   );
 }

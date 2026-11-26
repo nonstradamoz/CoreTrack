@@ -9,11 +9,13 @@ import {
   sendMail,
   fetchMailLogs,
   resendMailLog,
+  fetchTeams,
+  setMailPrimaryProvider,
   SendMailPayload,
   MailStatus,
   MailRecipientDirectory,
   MailLogsResponse,
-  MailLog,
+  Team,
 } from '../../lib/api';
 import { usePermissions } from '../../hooks/usePermissions';
 import {
@@ -27,28 +29,23 @@ import {
   AlertTriangle,
   RefreshCw,
   Search,
-  Filter,
   ShieldAlert,
-  ChevronRight,
-  Radio,
-  FileText,
-  Sparkles,
-  ExternalLink,
-  Layers,
-  Clock,
+  ArrowRight,
   Eye,
   EyeOff,
-  Inbox,
   AlertCircle,
   Server,
-  ArrowRight,
+  Clock,
+  X,
+  UsersRound,
 } from 'lucide-react';
 
-// Pre-built Quick Templates
+// ─── Templates ────────────────────────────────────────────────────────────────
+
 const QUICK_TEMPLATES = [
   {
     id: 'sprint_update',
-    name: 'Sprint & Milestone Sync',
+    name: 'Sprint Milestone Sync',
     category: 'PROJECT_UPDATE',
     priority: 'NORMAL' as const,
     subject: 'Sprint Milestone Review & Alignment Sync',
@@ -66,7 +63,7 @@ const QUICK_TEMPLATES = [
   },
   {
     id: 'task_directive',
-    name: 'Task Directive & Code Review',
+    name: 'Task Directive',
     category: 'TASK_DIRECTIVE',
     priority: 'HIGH' as const,
     subject: 'Task Assignment Directive & Code Quality Standards',
@@ -75,7 +72,7 @@ const QUICK_TEMPLATES = [
   },
   {
     id: 'internal_memo',
-    name: 'General Internal Memo',
+    name: 'Internal Memo',
     category: 'INTERNAL_MEMO',
     priority: 'NORMAL' as const,
     subject: 'Internal Organization Update & Operational Notice',
@@ -84,42 +81,77 @@ const QUICK_TEMPLATES = [
   },
 ];
 
+// ─── Shared style tokens ───────────────────────────────────────────────────────
+
+const inputCls =
+  'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 transition';
+
+const selectCls =
+  'w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 text-xs font-medium text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 transition';
+
+const btnSecondary =
+  'px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center gap-1.5 transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed';
+
+const btnPrimary =
+  'px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium flex items-center gap-1.5 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed';
+
+function Badge({
+  children,
+  variant = 'neutral',
+}: {
+  children: React.ReactNode;
+  variant?: 'neutral' | 'green' | 'red' | 'blue' | 'amber';
+}) {
+  const styles: Record<string, string> = {
+    neutral: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+    green: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
+    red: 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300',
+    blue: 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
+    amber: 'bg-amber-50 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
+  };
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium ${styles[variant]}`}>
+      {children}
+    </span>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
 export default function MailingPage() {
   const queryClient = useQueryClient();
   const { user, isOrgAdmin, roleTier, isLoading: isAuthLoading } = usePermissions();
-
-  // Tier check: Super Admin (5), Admin (4), Project Manager (3)
   const isAuthorized = Boolean(isOrgAdmin || (roleTier !== undefined && roleTier >= 3));
 
-  // Active Tab
+  // Tab
   const [activeTab, setActiveTab] = useState<'compose' | 'logs' | 'gateways'>('compose');
 
-  // Form State
-  const [recipientType, setRecipientType] = useState<'INDIVIDUAL' | 'INTERNAL_ALL' | 'PROJECT_TEAM' | 'CUSTOM_EMAIL'>('INDIVIDUAL');
+  // Compose form
+  const [recipientType, setRecipientType] = useState<'INDIVIDUAL' | 'INTERNAL_ALL' | 'PROJECT_TEAM' | 'TEAM_BROADCAST' | 'CUSTOM_EMAIL'>('INDIVIDUAL');
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string>('');
-  const [customEmails, setCustomEmails] = useState<string>('');
-  const [subject, setSubject] = useState<string>('');
-  const [category, setCategory] = useState<string>('DIRECT_MAIL');
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [customEmails, setCustomEmails] = useState('');
+  const [subject, setSubject] = useState('');
+  const [category, setCategory] = useState('DIRECT_MAIL');
   const [priority, setPriority] = useState<'LOW' | 'NORMAL' | 'HIGH' | 'URGENT'>('NORMAL');
-  const [content, setContent] = useState<string>('');
-  const [ctaText, setCtaText] = useState<string>('Open CoreTrack');
-  const [ctaUrl, setCtaUrl] = useState<string>('');
-  const [isPreviewOpen, setIsPreviewOpen] = useState<boolean>(false);
+  const [content, setContent] = useState('');
+  const [ctaText, setCtaText] = useState('Open CoreTrack');
+  const [ctaUrl, setCtaUrl] = useState('');
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [userSearch, setUserSearch] = useState('');
 
-  // User search within Recipient picker
-  const [userSearch, setUserSearch] = useState<string>('');
-
-  // Logs state
+  // Logs
   const [logsStatusFilter, setLogsStatusFilter] = useState<'ALL' | 'SENT' | 'FAILED'>('ALL');
-  const [logsSearch, setLogsSearch] = useState<string>('');
-  const [logsPage, setLogsPage] = useState<number>(1);
+  const [logsSearch, setLogsSearch] = useState('');
+  const [logsPage, setLogsPage] = useState(1);
 
-  // Success / Error Feedback
+  // Feedback
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Queries
-  const { data: statusData, isLoading: isStatusLoading } = useQuery<MailStatus>({
+  // ─── Queries ───────────────────────────────────────────────────────────────
+
+  const { data: statusData } = useQuery<MailStatus>({
     queryKey: ['mailStatus'],
     queryFn: fetchMailStatus,
     enabled: isAuthorized,
@@ -131,120 +163,109 @@ export default function MailingPage() {
     enabled: isAuthorized,
   });
 
+  const { data: teams = [] } = useQuery<Team[]>({
+    queryKey: ['teams'],
+    queryFn: fetchTeams,
+    enabled: isAuthorized,
+  });
+
   const { data: logsData, isLoading: isLogsLoading, refetch: refetchLogs } = useQuery<MailLogsResponse>({
     queryKey: ['mailLogs', logsStatusFilter, logsSearch, logsPage],
-    queryFn: () =>
-      fetchMailLogs({
-        status: logsStatusFilter,
-        search: logsSearch,
-        page: logsPage,
-        limit: 15,
-      }),
+    queryFn: () => fetchMailLogs({ status: logsStatusFilter, search: logsSearch, page: logsPage, limit: 15 }),
     enabled: isAuthorized && activeTab === 'logs',
   });
 
-  // Send Mutation
+  // ─── Mutations ─────────────────────────────────────────────────────────────
+
   const sendMutation = useMutation({
     mutationFn: (payload: SendMailPayload) => sendMail(payload),
     onSuccess: (data) => {
-      setFeedback({
-        type: 'success',
-        message: data.message || `Mail successfully sent to ${data.successCount} recipients!`,
-      });
-      // Clear or reset fields
+      setFeedback({ type: 'success', message: data.message || `Mail sent to ${data.successCount} recipients.` });
       if (recipientType === 'CUSTOM_EMAIL') setCustomEmails('');
       if (recipientType === 'INDIVIDUAL') setSelectedUserIds([]);
       setSubject('');
       setContent('');
       queryClient.invalidateQueries({ queryKey: ['mailStatus'] });
       queryClient.invalidateQueries({ queryKey: ['mailLogs'] });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
     },
     onError: (err: any) => {
-      setFeedback({
-        type: 'error',
-        message: err.message || 'Failed to dispatch email. Check provider configuration.',
-      });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      setFeedback({ type: 'error', message: err.message || 'Failed to send. Check provider configuration.' });
     },
   });
 
-  // Resend Mutation
   const resendMutation = useMutation({
     mutationFn: (logId: string) => resendMailLog(logId),
     onSuccess: () => {
-      setFeedback({
-        type: 'success',
-        message: 'Re-dispatch completed successfully.',
-      });
+      setFeedback({ type: 'success', message: 'Re-dispatch completed.' });
       refetchLogs();
       queryClient.invalidateQueries({ queryKey: ['mailStatus'] });
     },
     onError: (err: any) => {
+      setFeedback({ type: 'error', message: err.message || 'Re-dispatch failed.' });
+    },
+  });
+
+  const selectGatewayMutation = useMutation({
+    mutationFn: (provider: string) => setMailPrimaryProvider(provider),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['mailStatus'] });
+      setFeedback({
+        type: 'success',
+        message: `Primary mail server switched to ${data.primaryProvider}.`,
+      });
+    },
+    onError: (err: any) => {
       setFeedback({
         type: 'error',
-        message: err.message || 'Re-dispatch failed.',
+        message: err.message || 'Failed to switch mail server.',
       });
     },
   });
 
-  // Handle template selection
-  const handleSelectTemplate = (templateId: string) => {
-    const tmpl = QUICK_TEMPLATES.find((t) => t.id === templateId);
-    if (!tmpl) return;
-    setSubject(tmpl.subject);
-    setContent(tmpl.content);
-    setCategory(tmpl.category);
-    setPriority(tmpl.priority);
-    setCtaText(tmpl.ctaText);
-  };
+  // ─── Helpers ───────────────────────────────────────────────────────────────
 
-  // Toggle user selection
-  const toggleUserSelection = (userId: string) => {
+  function handleSelectTemplate(id: string) {
+    const t = QUICK_TEMPLATES.find((x) => x.id === id);
+    if (!t) return;
+    setSubject(t.subject);
+    setContent(t.content);
+    setCategory(t.category);
+    setPriority(t.priority);
+    setCtaText(t.ctaText);
+  }
+
+  function toggleUser(userId: string) {
     setSelectedUserIds((prev) =>
       prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
     );
-  };
+  }
 
-  // Filter available users
-  const filteredUsers = (recipientDirectory?.users || []).filter((u) => {
-    if (!userSearch.trim()) return true;
-    const term = userSearch.toLowerCase();
-    return u.fullName.toLowerCase().includes(term) || u.email.toLowerCase().includes(term);
-  });
-
-  // Handle Send Submit
-  const handleSend = (e: React.FormEvent) => {
+  function handleSend(e: React.FormEvent) {
     e.preventDefault();
     setFeedback(null);
+    if (!subject.trim()) return setFeedback({ type: 'error', message: 'Please provide a subject line.' });
+    if (!content.trim()) return setFeedback({ type: 'error', message: 'Please provide message content.' });
+    if (recipientType === 'INDIVIDUAL' && selectedUserIds.length === 0)
+      return setFeedback({ type: 'error', message: 'Select at least one recipient.' });
+    if (recipientType === 'PROJECT_TEAM' && !selectedProjectId)
+      return setFeedback({ type: 'error', message: 'Select a project to notify.' });
+    if (recipientType === 'CUSTOM_EMAIL' && !customEmails.trim())
+      return setFeedback({ type: 'error', message: 'Specify recipient email addresses.' });
+    if (recipientType === 'TEAM_BROADCAST' && !selectedTeamId)
+      return setFeedback({ type: 'error', message: 'Select a team to broadcast to.' });
 
-    if (!subject.trim()) {
-      setFeedback({ type: 'error', message: 'Please provide a subject line.' });
-      return;
-    }
-    if (!content.trim()) {
-      setFeedback({ type: 'error', message: 'Please provide message content.' });
-      return;
-    }
+    // Resolve TEAM_BROADCAST → INDIVIDUAL with the team's member IDs
+    const resolvedType = recipientType === 'TEAM_BROADCAST' ? 'INDIVIDUAL' : recipientType;
+    const resolvedUserIds = recipientType === 'TEAM_BROADCAST'
+      ? (teams.find((t) => t.id === selectedTeamId)?.members || []).map((m) => m.userId)
+      : recipientType === 'INDIVIDUAL' ? selectedUserIds : undefined;
 
-    if (recipientType === 'INDIVIDUAL' && selectedUserIds.length === 0) {
-      setFeedback({ type: 'error', message: 'Please select at least one recipient user.' });
-      return;
-    }
-
-    if (recipientType === 'PROJECT_TEAM' && !selectedProjectId) {
-      setFeedback({ type: 'error', message: 'Please select a project to notify its team.' });
-      return;
-    }
-
-    if (recipientType === 'CUSTOM_EMAIL' && !customEmails.trim()) {
-      setFeedback({ type: 'error', message: 'Please specify recipient email addresses.' });
-      return;
-    }
+    if (recipientType === 'TEAM_BROADCAST' && (!resolvedUserIds || resolvedUserIds.length === 0))
+      return setFeedback({ type: 'error', message: 'The selected team has no members.' });
 
     sendMutation.mutate({
-      recipientType,
-      recipientUserIds: recipientType === 'INDIVIDUAL' ? selectedUserIds : undefined,
+      recipientType: resolvedType as SendMailPayload['recipientType'],
+      recipientUserIds: resolvedUserIds,
       projectId: recipientType === 'PROJECT_TEAM' ? selectedProjectId : undefined,
       customEmails: recipientType === 'CUSTOM_EMAIL' ? customEmails : undefined,
       subject: subject.trim(),
@@ -254,369 +275,286 @@ export default function MailingPage() {
       ctaText: ctaText.trim() || undefined,
       ctaUrl: ctaUrl.trim() || undefined,
     });
-  };
+  }
 
-  // 1. Loading State
+  const filteredUsers = (recipientDirectory?.users || []).filter((u) => {
+    if (!userSearch.trim()) return true;
+    const q = userSearch.toLowerCase();
+    return u.fullName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+  });
+
+  const telemetry = statusData?.telemetry;
+  const primaryProvider = statusData?.primaryProvider || 'NONE';
+  const failoverEnabled = statusData?.failoverEnabled || false;
+
+  // ─── Loading / Access Guards ───────────────────────────────────────────────
+
   if (isAuthLoading) {
     return (
-      <div className="flex-1 flex items-center justify-center h-full bg-[#F5F6F8] dark:bg-[#111318]">
+      <div className="flex-1 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
-          <RefreshCw className="h-6 w-6 text-blue-600 animate-spin" />
-          <p className="text-xs font-semibold text-slate-500">Authenticating Executive Credentials...</p>
+          <RefreshCw className="h-5 w-5 text-blue-600 animate-spin" />
+          <p className="text-xs text-slate-500">Verifying credentials…</p>
         </div>
       </div>
     );
   }
 
-  // 2. Unauthorized View
   if (!isAuthorized) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-6 bg-[#F5F6F8] dark:bg-[#111318]">
-        <div className="max-w-md w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center shadow-sm">
-          <div className="h-14 w-14 rounded-2xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 flex items-center justify-center mx-auto mb-4 border border-rose-200 dark:border-rose-900/50">
-            <ShieldAlert className="h-7 w-7" />
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="max-w-sm w-full text-center space-y-4">
+          <div className="h-12 w-12 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900 flex items-center justify-center mx-auto">
+            <ShieldAlert className="h-6 w-6 text-rose-600 dark:text-rose-400" />
           </div>
-          <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-2">
-            Access Restricted: Executive Mail Hub
-          </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed mb-6">
-            The Direct & Inside Mailing module is restricted to <strong>Super Admins</strong>, <strong>Administrators</strong>, and <strong>Project Managers</strong> (Tier 3+).
-          </p>
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200/80 dark:border-slate-700/60 text-xs text-slate-600 dark:text-slate-400 mb-6">
-            <div>Your Account: <span className="font-semibold text-slate-900 dark:text-slate-200">{user?.fullName || 'User'}</span></div>
-            <div>Detected Role: <span className="font-semibold text-slate-900 dark:text-slate-200">{user?.roleName || 'Member'} (Tier {roleTier || 1})</span></div>
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Access Restricted</h2>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Mailing Center is restricted to <strong>Super Admins</strong>, <strong>Administrators</strong>, and <strong>Project Managers</strong> (Tier 3+).
+            </p>
+          </div>
+          <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-xs text-slate-600 dark:text-slate-400">
+            <div>Account: <span className="font-medium text-slate-900 dark:text-slate-200">{user?.fullName || 'User'}</span></div>
+            <div>Role: <span className="font-medium text-slate-900 dark:text-slate-200">{user?.roleName || 'Member'} · Tier {roleTier || 1}</span></div>
           </div>
           <Link
             href="/dashboard"
-            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs transition active:scale-95 shadow-sm"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition"
           >
-            <span>Return to Dashboard</span>
-            <ArrowRight className="h-4 w-4" />
+            Return to Dashboard <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
       </div>
     );
   }
 
-  const telemetry = statusData?.telemetry;
-  const primaryProvider = statusData?.primaryProvider || 'LOCAL';
-  const failoverEnabled = statusData?.failoverEnabled || false;
+  // ─── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#F5F6F8] dark:bg-[#111318] overflow-y-auto">
-      {/* ── TOP HEADER BANNER ── */}
-      <div className="border-b border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 px-6 py-5 transition-colors">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 max-w-7xl mx-auto">
-          <div>
-            <div className="flex items-center gap-2 text-xs text-slate-400 dark:text-slate-500 font-medium mb-1">
-              <span>Organization</span>
-              <ChevronRight className="h-3.5 w-3.5" />
-              <span>Communications</span>
-              <ChevronRight className="h-3.5 w-3.5" />
-              <span className="text-slate-900 dark:text-slate-200 font-semibold">Mailing Center</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl md:text-2xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-                Mailing Center & Inside Communications
-              </h1>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900/50">
-                <Radio className="h-3 w-3 animate-pulse text-emerald-500" />
-                <span>{user?.roleName || 'Executive Authority'}</span>
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Send direct emails to users or broadcast inside communications across project teams and departments.
-            </p>
-          </div>
+    <div className="flex-1 min-w-0 w-full max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-7 space-y-7">
 
-          {/* Mail Gateway Status Pill */}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 text-xs">
-              <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0"></span>
-              <span className="text-slate-500 dark:text-slate-400 font-medium">Gateway:</span>
-              <span className="font-bold text-slate-800 dark:text-slate-200">{primaryProvider}</span>
-              {failoverEnabled && (
-                <span className="text-[10px] bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 font-bold px-1.5 py-0.5 rounded">
-                  Failover Ready
-                </span>
-              )}
-            </div>
+      {/* ── Page Header ─────────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
+              Mailing Center
+            </h1>
+            <span className="px-2 py-0.5 rounded text-[10px] font-medium border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-mono">
+              {primaryProvider}
+            </span>
+            {failoverEnabled && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-medium bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-900">
+                Failover ready
+              </span>
+            )}
           </div>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            Send direct emails or broadcast inside communications to teams and departments.
+          </p>
+        </div>
+
+        <div className="text-right hidden sm:block">
+          <p className="text-[11px] text-slate-400">Sending as</p>
+          <p className="text-xs font-medium text-slate-700 dark:text-slate-300">{user?.fullName}</p>
+          <p className="text-[10px] text-slate-400 font-mono">{user?.email}</p>
         </div>
       </div>
 
-      {/* ── MAIN CONTENT CONTAINER ── */}
-      <div className="p-6 max-w-7xl mx-auto w-full space-y-6">
-        {/* Feedback Alert Banner */}
-        {feedback && (
+      {/* ── Feedback Banner ──────────────────────────────────────────────────── */}
+      {feedback && (
+        <div
+          className={`flex items-center justify-between gap-3 px-4 py-3 rounded-lg border text-xs ${
+            feedback.type === 'success'
+              ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-800 dark:text-emerald-200'
+              : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-900 text-rose-800 dark:text-rose-200'
+          }`}
+        >
+          <div className="flex items-center gap-2 font-medium">
+            {feedback.type === 'success' ? (
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+            ) : (
+              <AlertCircle className="h-4 w-4 shrink-0" />
+            )}
+            {feedback.message}
+          </div>
+          <button onClick={() => setFeedback(null)} className="text-current opacity-50 hover:opacity-100 cursor-pointer">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* ── Stat Row ────────────────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: 'Total Sent', value: telemetry?.totalDispatched ?? 0, sub: 'all time' },
+          { label: 'Delivery Rate', value: `${telemetry?.successRate ?? 100}%`, sub: `${telemetry?.totalSent ?? 0} delivered`, green: true },
+          { label: 'Failures', value: telemetry?.totalFailed ?? 0, sub: 'auto-failover active' },
+          { label: 'Active Gateway', value: primaryProvider, sub: 'primary provider' },
+        ].map((s) => (
           <div
-            className={`p-4 rounded-xl border flex items-start justify-between gap-3 text-xs animate-in fade-in transition ${
-              feedback.type === 'success'
-                ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200'
-                : 'bg-rose-50 dark:bg-rose-950/40 border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200'
-            }`}
+            key={s.label}
+            className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/60"
           >
-            <div className="flex items-center gap-2.5">
-              {feedback.type === 'success' ? (
-                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-              ) : (
-                <AlertCircle className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400" />
-              )}
-              <span className="font-medium">{feedback.message}</span>
-            </div>
+            <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium">{s.label}</p>
+            <p className={`mt-1 text-lg font-semibold leading-none ${s.green ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-slate-100'}`}>
+              {s.value}
+            </p>
+            <p className="mt-0.5 text-[11px] text-slate-400">{s.sub}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Tabs ─────────────────────────────────────────────────────────────── */}
+      <div className="border-b border-slate-200 dark:border-slate-800">
+        <nav className="-mb-px flex gap-0">
+          {([
+            { id: 'compose', label: 'Compose', icon: Send },
+            { id: 'logs', label: 'Delivery Logs', icon: Clock },
+            { id: 'gateways', label: 'Gateways', icon: Server },
+          ] as const).map(({ id, label, icon: Icon }) => (
             <button
-              onClick={() => setFeedback(null)}
-              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={`flex items-center gap-2 px-4 py-2.5 text-xs font-medium border-b-2 transition whitespace-nowrap cursor-pointer ${
+                activeTab === id
+                  ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-500'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+              }`}
             >
-              &times;
+              <Icon className="h-3.5 w-3.5" />
+              {label}
             </button>
-          </div>
-        )}
+          ))}
+        </nav>
+      </div>
 
-        {/* 1. AGGREGATE TELEMETRY KPI CARDS */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-400 mb-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Total Dispatches</span>
-              <Send className="h-4 w-4 text-blue-500" />
-            </div>
-            <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              {telemetry?.totalDispatched ?? 0}
-            </div>
-            <div className="text-[11px] text-slate-400 mt-1">Direct & inside notifications</div>
-          </div>
+      {/* ══════════════════════════════════════════════════════════════════════
+          TAB 1 — Compose & Dispatch
+      ══════════════════════════════════════════════════════════════════════ */}
+      {activeTab === 'compose' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
 
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-400 mb-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Delivery Rate</span>
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            </div>
-            <div className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-              {telemetry ? `${telemetry.successRate}%` : '100%'}
-            </div>
-            <div className="text-[11px] text-slate-400 mt-1">{telemetry?.totalSent ?? 0} successful transmissions</div>
-          </div>
+          {/* Left — Compose Form */}
+          <form onSubmit={handleSend} className="lg:col-span-7 space-y-5">
 
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-400 mb-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Delivery Failures</span>
-              <AlertTriangle className="h-4 w-4 text-amber-500" />
+            {/* Quick Templates */}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-slate-600 dark:text-slate-400">Quick templates</p>
+              <div className="grid grid-cols-2 gap-2">
+                {QUICK_TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => handleSelectTemplate(t.id)}
+                    className="text-left p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-blue-500 dark:hover:border-blue-500 bg-white dark:bg-slate-900 hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition cursor-pointer group"
+                  >
+                    <p className="text-xs font-medium text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 truncate">
+                      {t.name}
+                    </p>
+                    <p className="text-[10px] text-slate-400 mt-0.5 truncate">{t.subject}</p>
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-              {telemetry?.totalFailed ?? 0}
-            </div>
-            <div className="text-[11px] text-slate-400 mt-1">Automatic failover monitored</div>
-          </div>
 
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 shadow-2xs">
-            <div className="flex items-center justify-between text-slate-400 mb-2">
-              <span className="text-[11px] font-bold uppercase tracking-wider">Active Gateway</span>
-              <Server className="h-4 w-4 text-purple-500" />
-            </div>
-            <div className="text-lg font-bold text-slate-900 dark:text-slate-100 truncate">
-              {primaryProvider}
-            </div>
-            <div className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1">
-              Multi-provider failover
-            </div>
-          </div>
-        </div>
+            <div className="border-t border-slate-100 dark:border-slate-800 pt-5 space-y-5">
 
-        {/* 2. TAB CONTROLS */}
-        <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-px">
-          <button
-            onClick={() => setActiveTab('compose')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 cursor-pointer ${
-              activeTab === 'compose'
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
-            }`}
-          >
-            <Send className="h-4 w-4" />
-            <span>Compose & Dispatch</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('logs')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 cursor-pointer ${
-              activeTab === 'logs'
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
-            }`}
-          >
-            <Clock className="h-4 w-4" />
-            <span>Delivery & Audit Logs</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('gateways')}
-            className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold transition border-b-2 cursor-pointer ${
-              activeTab === 'gateways'
-                ? 'border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
-            }`}
-          >
-            <Server className="h-4 w-4" />
-            <span>Gateway Infrastructure</span>
-          </button>
-        </div>
-
-        {/* ── TAB 1: COMPOSE & DISPATCH ── */}
-        {activeTab === 'compose' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Left Column: Form (8 cols) */}
-            <form onSubmit={handleSend} className="lg:col-span-7 bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-2xs space-y-5">
-              {/* Quick Templates Selector */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-                    <span>Quick Fill Template</span>
-                  </label>
-                  <span className="text-[11px] text-slate-400">Optional speed preset</span>
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {QUICK_TEMPLATES.map((tmpl) => (
+              {/* Recipient Type Selector */}
+              <div className="space-y-2">
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Recipients
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                  {([
+                    { type: 'INDIVIDUAL', label: 'Direct Users', icon: Users, sub: 'Team members' },
+                    { type: 'PROJECT_TEAM', label: 'Project Team', icon: FolderGit2, sub: 'Inside broadcast' },
+                    { type: 'INTERNAL_ALL', label: 'All Staff', icon: Globe, sub: 'Org-wide' },
+                    { type: 'CUSTOM_EMAIL', label: 'Custom Email', icon: AtSign, sub: 'Ad-hoc' },
+                    { type: 'TEAM_BROADCAST', label: 'Team', icon: UsersRound, sub: 'Team broadcast' },
+                  ] as const).map(({ type, label, icon: Icon, sub }) => (
                     <button
-                      key={tmpl.id}
+                      key={type}
                       type="button"
-                      onClick={() => handleSelectTemplate(tmpl.id)}
-                      className="text-left p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-blue-500 dark:hover:border-blue-500 bg-slate-50/60 dark:bg-slate-800/40 hover:bg-blue-50/50 dark:hover:bg-blue-950/30 transition text-xs group cursor-pointer"
+                      onClick={() => setRecipientType(type)}
+                      className={`flex flex-col items-center gap-1.5 p-3 rounded-lg border text-center transition cursor-pointer ${
+                        recipientType === type
+                          ? 'border-blue-600 bg-blue-50/60 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300'
+                          : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'
+                      }`}
                     >
-                      <div className="font-semibold text-slate-800 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-400 truncate">
-                        {tmpl.name}
-                      </div>
-                      <div className="text-[10px] text-slate-400 truncate mt-0.5">{tmpl.subject}</div>
+                      <Icon className="h-4 w-4" />
+                      <span className="text-[11px] font-medium">{label}</span>
+                      <span className="text-[10px] text-slate-400">{sub}</span>
                     </button>
                   ))}
                 </div>
               </div>
 
-              {/* Target Scope Selection */}
-              <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-2">
-                  Recipient Scope
-                </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setRecipientType('INDIVIDUAL')}
-                    className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition cursor-pointer ${
-                      recipientType === 'INDIVIDUAL'
-                        ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
-                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-400'
-                    }`}
-                  >
-                    <Users className="h-5 w-5 mb-1.5" />
-                    <span className="text-xs">Direct Users</span>
-                    <span className="text-[10px] font-normal text-slate-400 mt-0.5">Pick team members</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setRecipientType('PROJECT_TEAM')}
-                    className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition cursor-pointer ${
-                      recipientType === 'PROJECT_TEAM'
-                        ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
-                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-400'
-                    }`}
-                  >
-                    <FolderGit2 className="h-5 w-5 mb-1.5" />
-                    <span className="text-xs">Project Team</span>
-                    <span className="text-[10px] font-normal text-slate-400 mt-0.5">Inside team broadcast</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setRecipientType('INTERNAL_ALL')}
-                    className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition cursor-pointer ${
-                      recipientType === 'INTERNAL_ALL'
-                        ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
-                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-400'
-                    }`}
-                  >
-                    <Globe className="h-5 w-5 mb-1.5" />
-                    <span className="text-xs">All Staff</span>
-                    <span className="text-[10px] font-normal text-slate-400 mt-0.5">Organization-wide</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setRecipientType('CUSTOM_EMAIL')}
-                    className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition cursor-pointer ${
-                      recipientType === 'CUSTOM_EMAIL'
-                        ? 'border-blue-600 bg-blue-50/70 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 font-bold shadow-2xs'
-                        : 'border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 text-slate-600 dark:text-slate-400'
-                    }`}
-                  >
-                    <AtSign className="h-5 w-5 mb-1.5" />
-                    <span className="text-xs">Custom Email</span>
-                    <span className="text-[10px] font-normal text-slate-400 mt-0.5">Ad-hoc addresses</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Dynamic Recipient Selectors */}
+              {/* Dynamic recipient picker */}
               {recipientType === 'INDIVIDUAL' && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                      Select Target Users ({selectedUserIds.length} selected)
+                    <label className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                      Select users
+                      {selectedUserIds.length > 0 && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+                          {selectedUserIds.length}
+                        </span>
+                      )}
                     </label>
                     {selectedUserIds.length > 0 && (
                       <button
                         type="button"
                         onClick={() => setSelectedUserIds([])}
-                        className="text-[11px] text-blue-600 hover:underline"
+                        className="text-[11px] text-blue-600 hover:underline cursor-pointer"
                       >
-                        Clear Selection
+                        Clear
                       </button>
                     )}
                   </div>
-
-                  {/* Search users */}
                   <div className="relative">
-                    <Search className="absolute left-3 top-2.5 h-3.5 w-3.5 text-slate-400" />
+                    <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     <input
                       type="text"
-                      placeholder="Search employees by name or email..."
+                      placeholder="Search by name or email…"
                       value={userSearch}
                       onChange={(e) => setUserSearch(e.target.value)}
-                      className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`${inputCls} pl-8`}
                     />
                   </div>
-
-                  {/* Users Chip list / check grid */}
-                  <div className="max-h-48 overflow-y-auto border border-slate-200 dark:border-slate-800 rounded-xl p-2 space-y-1 bg-slate-50/30 dark:bg-slate-900/50">
-                    {filteredUsers.length === 0 ? (
-                      <div className="text-center py-4 text-xs text-slate-400">No matching users found</div>
+                  <div className="max-h-44 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-800">
+                    {isRecipientsLoading ? (
+                      <p className="py-6 text-center text-xs text-slate-400">Loading…</p>
+                    ) : filteredUsers.length === 0 ? (
+                      <p className="py-6 text-center text-xs text-slate-400">No matching users.</p>
                     ) : (
                       filteredUsers.map((u) => {
-                        const isSelected = selectedUserIds.includes(u.id);
+                        const selected = selectedUserIds.includes(u.id);
                         return (
                           <div
                             key={u.id}
-                            onClick={() => toggleUserSelection(u.id)}
-                            className={`flex items-center justify-between p-2 rounded-lg text-xs cursor-pointer transition select-none ${
-                              isSelected
-                                ? 'bg-blue-50 dark:bg-blue-950/80 text-blue-900 dark:text-blue-200 font-semibold'
-                                : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            onClick={() => toggleUser(u.id)}
+                            className={`flex items-center justify-between px-3 py-2.5 cursor-pointer select-none transition text-xs ${
+                              selected
+                                ? 'bg-blue-50/80 dark:bg-blue-950/40'
+                                : 'hover:bg-slate-50 dark:hover:bg-slate-800'
                             }`}
                           >
                             <div className="flex items-center gap-2.5 min-w-0">
-                              <div className="h-6 w-6 rounded-full bg-blue-600 text-white font-bold text-[10px] flex items-center justify-center shrink-0">
+                              <div className="h-6 w-6 rounded-full bg-blue-600 text-white text-[10px] font-semibold flex items-center justify-center shrink-0">
                                 {u.fullName.charAt(0)}
                               </div>
-                              <div className="truncate">
-                                <div>{u.fullName}</div>
-                                <div className="text-[10px] text-slate-400">{u.email}</div>
+                              <div className="min-w-0">
+                                <p className="font-medium text-slate-800 dark:text-slate-200 truncate">{u.fullName}</p>
+                                <p className="text-[10px] text-slate-400 font-mono truncate">{u.email}</p>
                               </div>
                             </div>
                             <input
                               type="checkbox"
-                              checked={isSelected}
+                              checked={selected}
                               onChange={() => {}}
-                              className="h-4 w-4 rounded text-blue-600 cursor-pointer"
+                              className="h-3.5 w-3.5 rounded accent-blue-600 cursor-pointer"
                             />
                           </div>
                         );
@@ -627,60 +565,84 @@ export default function MailingPage() {
               )}
 
               {recipientType === 'PROJECT_TEAM' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Target Project (Notifies all assigned members & project managers)
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Target project
                   </label>
                   <select
                     value={selectedProjectId}
                     onChange={(e) => setSelectedProjectId(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={selectCls}
                   >
-                    <option value="">Select a project to broadcast to...</option>
+                    <option value="">Select a project…</option>
                     {(recipientDirectory?.projects || []).map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name} ({p.key})
-                      </option>
+                      <option key={p.id} value={p.id}>{p.name} ({p.key})</option>
                     ))}
                   </select>
                 </div>
               )}
 
               {recipientType === 'INTERNAL_ALL' && (
-                <div className="p-3 bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-900/50 rounded-xl text-xs text-purple-800 dark:text-purple-300 flex items-center gap-2.5">
-                  <Globe className="h-4 w-4 shrink-0 text-purple-600" />
-                  <span>
-                    Broadcasting inside memo to <strong>all active internal organization employees</strong> ({recipientDirectory?.users?.length || 0} registered).
-                  </span>
+                <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-700 dark:text-slate-300">
+                  <Globe className="h-4 w-4 text-slate-400 shrink-0" />
+                  Broadcasting to <strong>all {recipientDirectory?.users?.length || 0} internal employees.</strong>
                 </div>
               )}
 
               {recipientType === 'CUSTOM_EMAIL' && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Recipient Email Addresses (Comma-separated for multiple)
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Email addresses <span className="text-slate-400 font-normal">(comma-separated)</span>
                   </label>
                   <input
                     type="text"
-                    placeholder="e.g. employee@amrita.edu, lead@amrita.edu"
+                    placeholder="e.g. alice@company.com, bob@company.com"
                     value={customEmails}
                     onChange={(e) => setCustomEmails(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={inputCls}
                   />
                 </div>
               )}
 
-              {/* Category & Priority Row */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Category Tag
+              {recipientType === 'TEAM_BROADCAST' && (
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Select team
                   </label>
                   <select
-                    value={category}
-                    onChange={(e) => setCategory(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    value={selectedTeamId}
+                    onChange={(e) => setSelectedTeamId(e.target.value)}
+                    className={selectCls}
                   >
+                    <option value="">Choose a team…</option>
+                    {teams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} · {t.memberCount ?? t.members.length} members
+                        {t.lead ? ` · Lead: ${t.lead.fullName}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedTeamId && (() => {
+                    const team = teams.find((t) => t.id === selectedTeamId);
+                    if (!team) return null;
+                    return (
+                      <div className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 text-xs text-slate-600 dark:text-slate-400">
+                        <UsersRound className="h-4 w-4 text-slate-400 shrink-0 mt-0.5" />
+                        <span>
+                          Broadcasting to <strong className="text-slate-700 dark:text-slate-300">{team.members.length} member{team.members.length !== 1 ? 's' : ''}</strong> of <strong className="text-slate-700 dark:text-slate-300">{team.name}</strong>
+                          {team.lead ? <span className="text-slate-400"> · Lead: {team.lead.fullName}</span> : null}.
+                        </span>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+
+              {/* Category + Priority */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">Category</label>
+                  <select value={category} onChange={(e) => setCategory(e.target.value)} className={selectCls}>
                     <option value="DIRECT_MAIL">Direct Mail</option>
                     <option value="INTERNAL_ANNOUNCEMENT">Internal Announcement</option>
                     <option value="PROJECT_UPDATE">Project Update</option>
@@ -689,446 +651,401 @@ export default function MailingPage() {
                     <option value="INTERNAL_MEMO">Internal Memo</option>
                   </select>
                 </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Priority Level
-                  </label>
-                  <select
-                    value={priority}
-                    onChange={(e) => setPriority(e.target.value as any)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">Priority</label>
+                  <select value={priority} onChange={(e) => setPriority(e.target.value as any)} className={selectCls}>
                     <option value="LOW">Low</option>
                     <option value="NORMAL">Normal</option>
                     <option value="HIGH">High</option>
-                    <option value="URGENT">Urgent (Red Alert Badge)</option>
+                    <option value="URGENT">Urgent</option>
                   </select>
                 </div>
               </div>
 
-              {/* Subject Line */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                  Subject Line *
+              {/* Subject */}
+              <div className="space-y-1.5">
+                <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                  Subject <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
-                  placeholder="Enter clear, informative email subject..."
+                  required
+                  placeholder="Clear, informative subject line…"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  required
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100 font-medium placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={inputCls}
                 />
               </div>
 
-              {/* Message Content */}
-              <div>
-                <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Message Body *
+              {/* Body */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Message <span className="text-rose-500">*</span>
                   </label>
-                  <span className="text-[11px] text-slate-400">{content.length} characters</span>
+                  <span className="text-[11px] text-slate-400">{content.length} chars</span>
                 </div>
                 <textarea
                   rows={6}
-                  placeholder="Write message content here... Paragraphs separated by blank lines will be formatted into styled blocks."
+                  required
+                  placeholder="Write your message here. Paragraphs are formatted automatically."
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
-                  required
-                  className="w-full p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 leading-relaxed font-sans"
+                  className="w-full p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 resize-none leading-relaxed transition"
                 />
               </div>
 
-              {/* Optional Call to Action Button */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1 border-t border-slate-100 dark:border-slate-800/80">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Action Button Label
+              {/* CTA row */}
+              <div className="grid grid-cols-2 gap-3 pt-1 border-t border-slate-100 dark:border-slate-800">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Button label
                   </label>
                   <input
                     type="text"
                     placeholder="e.g. Open Kanban Board"
                     value={ctaText}
                     onChange={(e) => setCtaText(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100"
+                    className={inputCls}
                   />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
-                    Target URL (Optional)
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Button URL <span className="text-slate-400 font-normal">(optional)</span>
                   </label>
                   <input
                     type="text"
                     placeholder="Leave empty for CoreTrack home"
                     value={ctaUrl}
                     onChange={(e) => setCtaUrl(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100"
+                    className={inputCls}
                   />
                 </div>
               </div>
 
-              {/* Action Buttons Row */}
-              <div className="flex items-center justify-between pt-4 border-t border-slate-100 dark:border-slate-800/80">
-                <div className="text-[11px] text-slate-400">
-                  Transmitting as: <strong className="text-slate-700 dark:text-slate-300">{user?.fullName}</strong> ({user?.email})
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setIsPreviewOpen((prev) => !prev)}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 text-xs font-semibold transition cursor-pointer"
-                  >
-                    {isPreviewOpen ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                    <span>{isPreviewOpen ? 'Hide Preview' : 'Preview Email'}</span>
-                  </button>
-
-                  <button
-                    type="submit"
-                    disabled={sendMutation.isPending}
-                    className="inline-flex items-center gap-2 px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs transition active:scale-95 shadow-sm cursor-pointer"
-                  >
-                    {sendMutation.isPending ? (
-                      <>
-                        <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                        <span>Transmitting...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Send className="h-3.5 w-3.5" />
-                        <span>Dispatch Mail</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-            </form>
-
-            {/* Right Column: Live Email Preview (5 cols) */}
-            <div className="lg:col-span-5 space-y-4">
-              <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-2xs">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-                  <div className="flex items-center gap-2">
-                    <Inbox className="h-4 w-4 text-blue-600" />
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                      Recipient Inbox Preview
-                    </h3>
-                  </div>
-                  <span className="text-[10px] text-slate-400 font-mono">Branded HTML Card</span>
-                </div>
-
-                {/* Rendered Mock Email Box */}
-                <div className="mt-4 border border-slate-200 dark:border-slate-700/80 rounded-xl overflow-hidden shadow-xs bg-slate-50 dark:bg-slate-950/40 text-slate-900 dark:text-slate-100">
-                  {/* Mock Email Header */}
-                  <div className="bg-slate-900 text-white px-4 py-3 flex items-center justify-between">
-                    <div className="font-extrabold text-xs text-blue-400 tracking-tight">CoreTrack</div>
-                    <span
-                      className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full text-white ${
-                        priority === 'URGENT' || category === 'URGENT_NOTICE'
-                          ? 'bg-rose-600'
-                          : category === 'PROJECT_UPDATE'
-                          ? 'bg-emerald-600'
-                          : category === 'INTERNAL_ANNOUNCEMENT'
-                          ? 'bg-purple-600'
-                          : 'bg-blue-600'
-                      }`}
-                    >
-                      {category.replace(/_/g, ' ')}
-                    </span>
-                  </div>
-
-                  {/* Mock Email Body */}
-                  <div className="p-4 space-y-3 bg-white dark:bg-slate-900">
-                    <div className="text-base font-bold text-slate-900 dark:text-slate-100 leading-snug">
-                      {priority === 'URGENT' ? `[URGENT] ${subject || 'Subject will appear here...'}` : subject || 'Subject will appear here...'}
-                    </div>
-
-                    <div className="text-xs text-slate-500">
-                      Hello Team Member,
-                    </div>
-
-                    <div className="p-3 bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 rounded-xl text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed font-sans min-h-[80px]">
-                      {content || 'Your formatted message body will render inside this container with high clarity and contrast.'}
-                    </div>
-
-                    {/* Metadata table in email */}
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 space-y-1">
-                      <div className="flex justify-between">
-                        <span>Sent by:</span>
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">{user?.fullName || 'Active Executive'}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Gateway:</span>
-                        <span className="font-semibold text-slate-700 dark:text-slate-300">{primaryProvider}</span>
-                      </div>
-                    </div>
-
-                    {/* CTA Button */}
-                    <div className="pt-2">
-                      <div className="inline-block px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold text-center">
-                        {ctaText || 'Open CoreTrack'} &rarr;
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Mock Footer */}
-                  <div className="p-3 bg-slate-100 dark:bg-slate-800/80 border-t border-slate-200 dark:border-slate-700/80 text-[10px] text-slate-400 text-center">
-                    CoreTrack Task & Project Management &bull; Amrita Vishwa Vidyapeetham
-                  </div>
-                </div>
-
-                {/* Recipient summary helper */}
-                <div className="mt-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 text-xs text-slate-500 space-y-1">
-                  <div className="font-semibold text-slate-700 dark:text-slate-300">Target Summary:</div>
-                  <div>
-                    {recipientType === 'INDIVIDUAL' && `${selectedUserIds.length} employee(s) selected.`}
-                    {recipientType === 'PROJECT_TEAM' && (selectedProjectId ? 'All assigned members of selected project.' : 'Select a project to preview audience.')}
-                    {recipientType === 'INTERNAL_ALL' && 'All internal employees across organization.'}
-                    {recipientType === 'CUSTOM_EMAIL' && (customEmails ? `Custom: ${customEmails}` : 'Specify comma-separated emails.')}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ── TAB 2: AUDIT & DELIVERY LOGS ── */}
-        {activeTab === 'logs' && (
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-2xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                  Email Delivery & Audit Logs
-                </h3>
-                <p className="text-xs text-slate-400">
-                  Full historical audit record of direct communications, notifications, and provider failover events.
-                </p>
-              </div>
-
-              {/* Filters */}
-              <div className="flex items-center gap-2">
-                {/* Search */}
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Search logs..."
-                    value={logsSearch}
-                    onChange={(e) => {
-                      setLogsSearch(e.target.value);
-                      setLogsPage(1);
-                    }}
-                    className="pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500 w-44 sm:w-56"
-                  />
-                </div>
-
-                {/* Status Filter */}
-                <select
-                  value={logsStatusFilter}
-                  onChange={(e) => {
-                    setLogsStatusFilter(e.target.value as any);
-                    setLogsPage(1);
-                  }}
-                  className="px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/50 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              {/* Footer actions */}
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsPreviewOpen((p) => !p)}
+                  className={btnSecondary}
                 >
-                  <option value="ALL">All Statuses</option>
-                  <option value="SENT">Sent</option>
-                  <option value="FAILED">Failed</option>
-                </select>
+                  {isPreviewOpen ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                  {isPreviewOpen ? 'Hide Preview' : 'Preview'}
+                </button>
 
                 <button
-                  onClick={() => refetchLogs()}
-                  className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100 transition cursor-pointer"
-                  title="Refresh logs"
+                  type="submit"
+                  disabled={sendMutation.isPending}
+                  className={`${btnPrimary} px-5`}
                 >
-                  <RefreshCw className="h-3.5 w-3.5" />
+                  {sendMutation.isPending ? (
+                    <><RefreshCw className="h-3.5 w-3.5 animate-spin" /> Sending…</>
+                  ) : (
+                    <><Send className="h-3.5 w-3.5" /> Dispatch Mail</>
+                  )}
                 </button>
               </div>
             </div>
+          </form>
 
-            {/* Logs Table */}
-            <div className="border border-slate-200/80 dark:border-slate-800 rounded-xl overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
+          {/* Right — Live Preview */}
+          <div className="lg:col-span-5 space-y-3 sticky top-6">
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-3">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <Mail className="h-3.5 w-3.5 text-blue-600" />
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">Email Preview</span>
+                </div>
+                <span className="text-[10px] text-slate-400">Branded HTML card</span>
+              </div>
+
+              {/* Mock email */}
+              <div className="rounded-lg overflow-hidden border border-slate-200 dark:border-slate-700 text-xs">
+                {/* Email header */}
+                <div className="bg-slate-900 text-white px-4 py-2.5 flex items-center justify-between">
+                  <span className="font-bold text-blue-400 tracking-tight text-xs">CoreTrack</span>
+                  <span className={`text-[9px] font-bold uppercase px-2 py-0.5 rounded-full text-white ${
+                    priority === 'URGENT' ? 'bg-rose-600' :
+                    category === 'PROJECT_UPDATE' ? 'bg-emerald-600' :
+                    category === 'INTERNAL_ANNOUNCEMENT' ? 'bg-purple-600' : 'bg-blue-600'
+                  }`}>
+                    {category.replace(/_/g, ' ')}
+                  </span>
+                </div>
+
+                {/* Email body */}
+                <div className="p-4 bg-white dark:bg-slate-900 space-y-3">
+                  <p className="font-semibold text-slate-900 dark:text-slate-100 leading-snug">
+                    {priority === 'URGENT' ? `[URGENT] ` : ''}{subject || 'Subject line preview…'}
+                  </p>
+                  <p className="text-slate-500 text-[11px]">Hello Team Member,</p>
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed min-h-[60px]">
+                    {content || 'Your formatted message will appear here…'}
+                  </div>
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[10px] text-slate-500 space-y-0.5">
+                    <div className="flex justify-between">
+                      <span>Sent by:</span>
+                      <span className="font-medium text-slate-700 dark:text-slate-300">{user?.fullName || 'Executive'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Gateway:</span>
+                      <span className="font-mono font-medium text-slate-700 dark:text-slate-300">{primaryProvider}</span>
+                    </div>
+                  </div>
+                  <div className="inline-block px-3 py-1.5 bg-blue-600 text-white rounded text-[11px] font-medium">
+                    {ctaText || 'Open CoreTrack'} →
+                  </div>
+                </div>
+
+                {/* Email footer */}
+                <div className="px-4 py-2 bg-slate-100 dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 text-[10px] text-slate-400 text-center">
+                  CoreTrack · Amrita Vishwa Vidyapeetham
+                </div>
+              </div>
+
+              {/* Recipient summary */}
+              <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-400">
+                <p className="font-medium text-slate-700 dark:text-slate-300 mb-0.5">Recipients</p>
+                <p>
+                  {recipientType === 'INDIVIDUAL' && `${selectedUserIds.length} user${selectedUserIds.length !== 1 ? 's' : ''} selected`}
+                  {recipientType === 'PROJECT_TEAM' && (selectedProjectId ? 'All members of selected project' : 'Select a project to preview audience')}
+                  {recipientType === 'INTERNAL_ALL' && 'All internal employees'}
+                  {recipientType === 'CUSTOM_EMAIL' && (customEmails ? customEmails : 'Specify email addresses')}
+                  {recipientType === 'TEAM_BROADCAST' && (() => {
+                    const team = teams.find((t) => t.id === selectedTeamId);
+                    return team ? `${team.name} · ${team.members.length} member${team.members.length !== 1 ? 's' : ''}` : 'Select a team';
+                  })()}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          TAB 2 — Delivery Logs
+      ══════════════════════════════════════════════════════════════════════ */}
+      {activeTab === 'logs' && (
+        <div className="space-y-4">
+
+          {/* Toolbar */}
+          <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between">
+            <div className="relative max-w-xs flex-1">
+              <Search className="h-3.5 w-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Search recipient, subject…"
+                value={logsSearch}
+                onChange={(e) => { setLogsSearch(e.target.value); setLogsPage(1); }}
+                className={`${inputCls} pl-8`}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <select
+                value={logsStatusFilter}
+                onChange={(e) => { setLogsStatusFilter(e.target.value as any); setLogsPage(1); }}
+                className="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs font-medium text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-1 focus:ring-blue-600 transition"
+              >
+                <option value="ALL">All statuses</option>
+                <option value="SENT">Sent</option>
+                <option value="FAILED">Failed</option>
+              </select>
+              <button onClick={() => refetchLogs()} className={btnSecondary}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Refresh
+              </button>
+            </div>
+          </div>
+
+          {/* Table */}
+          {isLogsLoading ? (
+            <div className="py-16 text-center">
+              <RefreshCw className="h-5 w-5 animate-spin text-blue-600 mx-auto mb-2" />
+              <p className="text-xs text-slate-400">Loading logs…</p>
+            </div>
+          ) : (logsData?.logs || []).length === 0 ? (
+            <div className="py-16 flex flex-col items-center gap-3 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+              <Mail className="h-7 w-7 text-slate-300 dark:text-slate-700" />
+              <p className="text-sm font-medium text-slate-600 dark:text-slate-400">No delivery logs</p>
+              <p className="text-xs text-slate-400">No records match your current filter.</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-slate-900">
+              <table className="w-full text-left text-xs">
                 <thead>
-                  <tr className="border-b border-slate-200/80 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/50 text-slate-500 font-bold uppercase text-[10px] tracking-wider">
-                    <th className="py-3 px-4">Recipient</th>
-                    <th className="py-3 px-4">Subject</th>
-                    <th className="py-3 px-4">Category</th>
-                    <th className="py-3 px-4">Gateway</th>
-                    <th className="py-3 px-4">Status</th>
-                    <th className="py-3 px-4">Dispatched At</th>
-                    <th className="py-3 px-4 text-right">Action</th>
+                  <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-800/50">
+                    {['Recipient', 'Subject', 'Category', 'Gateway', 'Status', 'Dispatched', ''].map((h) => (
+                      <th key={h} className="px-4 py-2.5 font-medium text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {h}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                  {isLogsLoading ? (
-                    <tr>
-                      <td colSpan={7} className="text-center py-8 text-slate-400">
-                        <RefreshCw className="h-5 w-5 animate-spin mx-auto mb-2 text-blue-600" />
-                        Loading transmission logs...
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {(logsData?.logs || []).map((log) => (
+                    <tr key={log.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition">
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-slate-800 dark:text-slate-200 truncate max-w-[120px]">
+                          {log.recipientName || log.recipientEmail.split('@')[0]}
+                        </p>
+                        <p className="text-[10px] text-slate-400 font-mono truncate max-w-[120px]">{log.recipientEmail}</p>
+                      </td>
+                      <td className="px-4 py-3 max-w-[160px] truncate font-medium text-slate-700 dark:text-slate-300" title={log.subject}>
+                        {log.subject}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <Badge variant="neutral">{log.notificationType.replace(/_/g, ' ')}</Badge>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[11px] text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {log.provider}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          log.status === 'SENT'
+                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
+                            : 'bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300'
+                        }`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${log.status === 'SENT' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                          {log.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-[11px] text-slate-400 font-mono whitespace-nowrap">
+                        {new Date(log.sentAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => resendMutation.mutate(log.id)}
+                          disabled={resendMutation.isPending}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer disabled:opacity-40"
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          Resend
+                        </button>
                       </td>
                     </tr>
-                  ) : (logsData?.logs || []).length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="text-center py-8 text-slate-400">
-                        No transmission records match your filter criteria.
-                      </td>
-                    </tr>
-                  ) : (
-                    (logsData?.logs || []).map((log) => (
-                      <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition">
-                        <td className="py-3 px-4">
-                          <div className="font-semibold text-slate-800 dark:text-slate-200">
-                            {log.recipientName || log.recipientEmail.split('@')[0]}
-                          </div>
-                          <div className="text-[10px] text-slate-400 font-mono">{log.recipientEmail}</div>
-                        </td>
-                        <td className="py-3 px-4 max-w-xs truncate font-medium text-slate-700 dark:text-slate-300">
-                          {log.subject}
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className="inline-block px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                            {log.notificationType.replace(/_/g, ' ')}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className="font-mono text-[11px] text-slate-600 dark:text-slate-400">
-                            {log.provider}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4">
-                          <span
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                              log.status === 'SENT'
-                                ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/50'
-                                : 'bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50'
-                            }`}
-                          >
-                            <span
-                              className={`h-1.5 w-1.5 rounded-full ${
-                                log.status === 'SENT' ? 'bg-emerald-500' : 'bg-rose-500'
-                              }`}
-                            ></span>
-                            {log.status}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 text-slate-500 text-[11px]">
-                          {new Date(log.sentAt).toLocaleString([], {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <button
-                            onClick={() => resendMutation.mutate(log.id)}
-                            disabled={resendMutation.isPending}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition cursor-pointer"
-                            title="Re-transmit notification"
-                          >
-                            <RefreshCw className="h-3 w-3" />
-                            <span>Resend</span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
+                  ))}
                 </tbody>
               </table>
             </div>
+          )}
 
-            {/* Pagination */}
-            {logsData?.pagination && logsData.pagination.totalPages > 1 && (
-              <div className="flex items-center justify-between text-xs text-slate-500 pt-2">
-                <div>
-                  Page {logsData.pagination.page} of {logsData.pagination.totalPages} ({logsData.pagination.total} total)
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    disabled={logsPage <= 1}
-                    onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
-                    className="px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-800 disabled:opacity-40"
-                  >
-                    Previous
-                  </button>
-                  <button
-                    disabled={logsPage >= logsData.pagination.totalPages}
-                    onClick={() => setLogsPage((p) => p + 1)}
-                    className="px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-800 disabled:opacity-40"
-                  >
-                    Next
-                  </button>
-                </div>
+          {/* Pagination */}
+          {logsData?.pagination && logsData.pagination.totalPages > 1 && (
+            <div className="flex items-center justify-between text-xs text-slate-500">
+              <span>Page {logsData.pagination.page} of {logsData.pagination.totalPages} · {logsData.pagination.total} records</span>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={logsPage <= 1}
+                  onClick={() => setLogsPage((p) => Math.max(1, p - 1))}
+                  className={btnSecondary}
+                >
+                  Previous
+                </button>
+                <button
+                  disabled={logsPage >= logsData.pagination.totalPages}
+                  onClick={() => setLogsPage((p) => p + 1)}
+                  className={btnSecondary}
+                >
+                  Next
+                </button>
               </div>
-            )}
-          </div>
-        )}
-
-        {/* ── TAB 3: GATEWAY INFRASTRUCTURE ── */}
-        {activeTab === 'gateways' && (
-          <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-6 shadow-2xs space-y-6">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                Multi-Provider Transmission Architecture
-              </h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                CoreTrack features automatic sub-second gateway failover. If an enterprise SMTP quota exhausts or encounters transient network blocks, transmission immediately falls over to the backup provider without losing message telemetry.
-              </p>
             </div>
+          )}
+        </div>
+      )}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {(statusData?.providers || []).map((provider) => (
+      {/* ══════════════════════════════════════════════════════════════════════
+          TAB 3 — Gateways
+      ══════════════════════════════════════════════════════════════════════ */}
+      {activeTab === 'gateways' && (
+        <div className="space-y-5">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+              Multi-Provider Delivery Architecture
+            </h2>
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 max-w-2xl">
+              CoreTrack features automatic sub-second gateway failover. If an enterprise SMTP quota exhausts or encounters transient network errors, transmission immediately falls over to the backup provider without losing message telemetry.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {(statusData?.allGateways || statusData?.providers || []).map((provider) => {
+              const isSelected = provider.name === primaryProvider;
+              const isConfigured = provider.configured !== false;
+              return (
                 <div
                   key={provider.name}
-                  className="border border-slate-200/80 dark:border-slate-800 rounded-2xl p-4 bg-slate-50/50 dark:bg-slate-800/40 space-y-3"
+                  className={`p-4 rounded-xl border bg-white dark:bg-slate-900 space-y-3 transition ${
+                    isSelected
+                      ? 'border-blue-600 dark:border-blue-500 ring-1 ring-blue-600/20'
+                      : 'border-slate-200 dark:border-slate-800'
+                  }`}
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      Priority {provider.priority}
+                    <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wide">
+                      {isSelected ? 'Primary Server' : isConfigured ? `Priority ${provider.priority}` : 'Not Configured'}
                     </span>
                     <span
                       className={`h-2 w-2 rounded-full ${
-                        provider.name === primaryProvider ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+                        isSelected
+                          ? 'bg-emerald-500 animate-pulse'
+                          : isConfigured
+                            ? 'bg-slate-300 dark:bg-slate-600'
+                            : 'bg-slate-200 dark:bg-slate-700'
                       }`}
-                    ></span>
+                    />
                   </div>
                   <div>
-                    <div className="text-base font-bold text-slate-900 dark:text-slate-100">
-                      {provider.name}
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{provider.name}</p>
+                      {isSelected && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                          Active
+                        </span>
+                      )}
                     </div>
-                    <div className="text-xs text-slate-500 truncate font-mono mt-0.5">
-                      From: {provider.from}
-                    </div>
+                    <p className="text-[11px] font-mono text-slate-500 mt-0.5 truncate">From: {provider.from}</p>
                   </div>
-                  <div className="text-[11px] text-slate-500">
-                    {provider.name === 'RESEND' && 'Primary high-throughput transactional gateway via smtp.resend.com.'}
-                    {provider.name === 'MAILJET' && 'Secondary enterprise failover relay via in-v3.mailjet.com.'}
-                    {provider.name === 'CUSTOM_SMTP' && 'Corporate internal relay configured via custom SMTP credentials.'}
-                    {provider.name === 'LOCAL' && 'Development/staging mock transporter with lossless telemetry logs.'}
-                  </div>
-                  <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-[11px]">
-                    <span className="text-slate-400">Status</span>
-                    <span className="font-semibold text-emerald-600 dark:text-emerald-400">Active & Ready</span>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                    {provider.name === 'RESEND' && 'High-throughput transactional gateway via smtp.resend.com.'}
+                    {provider.name === 'MAILJET' && 'Enterprise failover relay via in-v3.mailjet.com.'}
+                    {provider.name === 'BREVO' && 'Transactional HTTP v3 API relay via api.brevo.com.'}
+                  </p>
+                  <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
+                    <span className={isConfigured ? 'font-medium text-emerald-600 dark:text-emerald-400' : 'text-slate-400'}>
+                      {isSelected ? 'Selected' : isConfigured ? 'Ready' : 'Missing env keys'}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={isSelected || !isConfigured || selectGatewayMutation.isPending}
+                      onClick={() => selectGatewayMutation.mutate(provider.name)}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold transition ${
+                        isSelected
+                          ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 cursor-default'
+                          : isConfigured
+                            ? 'bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:opacity-90 cursor-pointer'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                      }`}
+                    >
+                      {isSelected ? 'Using This Server' : isConfigured ? 'Use Server' : 'Unavailable'}
+                    </button>
                   </div>
                 </div>
-              ))}
-            </div>
+              );
+            })}
+          </div>
 
-            <div className="p-4 rounded-xl bg-blue-50/60 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-900/50 text-xs text-blue-900 dark:text-blue-300 space-y-2">
-              <div className="font-bold flex items-center gap-2">
-                <ShieldAlert className="h-4 w-4 text-blue-600" />
-                <span>Executive Security & Audit Compliance</span>
-              </div>
-              <p className="text-slate-600 dark:text-slate-300 leading-relaxed">
-                All communications triggered from this interface are timestamped, logged with cryptographic IDs, and tied directly to the dispatching executive ({user?.email}). Recipients receive official CoreTrack emails with sender attribution and security watermarks.
-              </p>
+          {/* Audit compliance note */}
+          <div className="flex items-start gap-3 p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-800/40">
+            <ShieldAlert className="h-4 w-4 text-slate-500 dark:text-slate-400 shrink-0 mt-0.5" />
+            <div className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
+              <span className="font-semibold text-slate-700 dark:text-slate-300 block mb-0.5">Security & Audit Compliance</span>
+              All communications triggered from this interface are timestamped, logged with cryptographic IDs, and tied to the dispatching executive (<span className="font-mono">{user?.email}</span>). Recipients receive official CoreTrack emails with sender attribution and security watermarks.
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,6 +8,10 @@ import {
   teamMembers,
   projects,
   projectMembers,
+  tickets,
+  ticketComments,
+  ticketAttachments,
+  ticketApprovals,
   roles,
   eq,
   desc,
@@ -16,9 +20,11 @@ import { Permissions, StandardRoleBitmasks } from '@coretrack/shared';
 import {
   getCurrentUser,
   setMockUserEmail,
+  clearMockUserSession,
   getEffectiveUserPermissions,
   getUserRoleTier,
 } from '../auth/auth.js';
+import { hashPassword, verifyPassword, validatePasswordPolicy } from '../auth/password.js';
 import { sendDirectOrBroadcastEmail } from '../services/email.js';
 
 function getRoleFromPermissions(perms: bigint): { roleName: string; roleTier: number } {
@@ -76,8 +82,14 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const projectKey = request.query.projectKey;
-      const { permissions, roleName } = await getEffectiveUserPermissions(user.id, projectKey);
-      const tierInfo = await getUserRoleTier(user.id, projectKey);
+      const [{ permissions, roleName }, tierInfo, dbUserFlags] = await Promise.all([
+        getEffectiveUserPermissions(user.id, projectKey),
+        getUserRoleTier(user.id, projectKey),
+        db.query.users.findFirst({
+          where: eq(users.id, user.id),
+          columns: { mustChangePassword: true, passwordHash: true },
+        }),
+      ]);
 
       return reply.send({
         data: {
@@ -89,6 +101,9 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           effectivePermissions: permissions.toString(),
           roleName: roleName || tierInfo.roleName || 'Member',
           roleTier: tierInfo.tier,
+          mustChangePassword: Boolean(
+            dbUserFlags?.mustChangePassword || !dbUserFlags?.passwordHash
+          ),
         },
       });
     }
@@ -112,6 +127,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
             id: u.id,
             email: u.email,
             fullName: u.fullName,
+            designation: u.designation || null,
             userType: u.userType,
             status: u.status,
             globalPermissions: u.globalPermissions.toString(),
@@ -134,6 +150,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         body: z.object({
           fullName: z.string().min(2).max(150),
           email: z.string().email(),
+          password: z.string().min(8),
+          designation: z.string().max(120).optional().nullable(),
           role: z.enum(['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEAD', 'EMPLOYEE']).default('EMPLOYEE'),
           userType: z.enum(['INTERNAL_EMPLOYEE', 'EXTERNAL_GUEST']).default('INTERNAL_EMPLOYEE'),
           status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
@@ -161,6 +179,8 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       const {
         fullName,
         email,
+        password,
+        designation,
         role,
         userType,
         status,
@@ -169,6 +189,11 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         projectRoleId,
         sendInviteEmail,
       } = request.body;
+
+      const policyError = validatePasswordPolicy(password);
+      if (policyError) {
+        return reply.status(400).send({ error: policyError });
+      }
 
       const normalizedEmail = email.toLowerCase().trim();
 
@@ -183,16 +208,20 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Compute global permissions from selected role
+      // Compute global permissions from selected role & hash password
       const globalPermissions = getPermissionsFromRole(role);
+      const passwordHash = await hashPassword(password);
 
       const [newUser] = await db
         .insert(users)
         .values({
           fullName: fullName.trim(),
           email: normalizedEmail,
+          designation: designation?.trim() || null,
           userType,
           status,
+          passwordHash,
+          mustChangePassword: true,
           globalPermissions,
         })
         .returning();
@@ -279,9 +308,11 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         }),
         body: z.object({
           fullName: z.string().min(2).max(150).optional(),
+          designation: z.string().max(120).optional().nullable(),
           role: z.enum(['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TEAM_LEAD', 'EMPLOYEE']).optional(),
           userType: z.enum(['INTERNAL_EMPLOYEE', 'EXTERNAL_GUEST']).optional(),
           status: z.enum(['ACTIVE', 'INACTIVE']).optional(),
+          password: z.string().min(8).optional(),
         }),
       },
     },
@@ -306,13 +337,22 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'User not found' });
       }
 
-      const { fullName, role, userType, status } = request.body;
+      const { fullName, designation, role, userType, status, password } = request.body;
       const updates: Record<string, any> = {};
 
       if (fullName) updates.fullName = fullName.trim();
+      if (designation !== undefined) updates.designation = designation?.trim() || null;
       if (userType) updates.userType = userType;
       if (status) updates.status = status;
       if (role) updates.globalPermissions = getPermissionsFromRole(role);
+      if (password) {
+        const policyError = validatePasswordPolicy(password);
+        if (policyError) {
+          return reply.status(400).send({ error: policyError });
+        }
+        updates.passwordHash = await hashPassword(password);
+        updates.mustChangePassword = true;
+      }
 
       const [updated] = await db
         .update(users)
@@ -330,6 +370,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           id: updated.id,
           email: updated.email,
           fullName: updated.fullName,
+          designation: updated.designation || null,
           userType: updated.userType,
           status: updated.status,
           globalPermissions: updated.globalPermissions.toString(),
@@ -341,12 +382,12 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // 2d. Deactivate User Account
+  // 2d. Permanently Delete User Account
   app.delete(
     '/users/:id',
     {
       schema: {
-        description: 'Soft-deactivate a user account',
+        description: 'Permanently delete a user account',
         tags: ['Authentication & IAM'],
         params: z.object({
           id: z.string().uuid(),
@@ -363,26 +404,32 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       const callerTierInfo = await getUserRoleTier(caller.id);
 
       if (!isOrgAdmin && callerTierInfo.tier < 4) {
-        return reply.status(403).send({ error: 'Access denied: Deactivating users requires Administrator or Super Admin privileges.' });
+        return reply.status(403).send({ error: 'Access denied: Deleting users requires Administrator or Super Admin privileges.' });
       }
 
-      const [updated] = await db
-        .update(users)
-        .set({
-          status: 'INACTIVE',
-          updatedAt: new Date(),
-        })
-        .where(eq(users.id, request.params.id))
-        .returning();
+      const targetId = request.params.id;
+      if (targetId === caller.id) {
+        return reply.status(400).send({ error: 'You cannot delete your own active account.' });
+      }
 
-      if (!updated) {
+      const existing = await db.query.users.findFirst({ where: eq(users.id, targetId) });
+      if (!existing) {
         return reply.status(404).send({ error: 'User not found' });
       }
 
+      // Reassign restrict-constrained foreign keys to the admin performing the deletion
+      await Promise.all([
+        db.update(tickets).set({ reporterId: caller.id }).where(eq(tickets.reporterId, targetId)),
+        db.update(ticketComments).set({ authorId: caller.id }).where(eq(ticketComments.authorId, targetId)),
+        db.update(ticketAttachments).set({ uploaderId: caller.id }).where(eq(ticketAttachments.uploaderId, targetId)),
+        db.update(ticketApprovals).set({ approverId: caller.id }).where(eq(ticketApprovals.approverId, targetId)),
+      ]);
+
+      await db.delete(users).where(eq(users.id, targetId));
+
       return reply.send({
         data: {
-          message: `User ${updated.email} has been deactivated.`,
-          user: updated,
+          message: `User ${existing.email} has been permanently deleted.`,
         },
       });
     }
@@ -419,12 +466,12 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // 4. Authenticate / Login User (Credentials or Test Persona)
+  // 4. Authenticate / Login User (Email + Password)
   app.post(
     '/login',
     {
       schema: {
-        description: 'Login with email and optional test password',
+        description: 'Login with email and password for any active user account',
         tags: ['Authentication & IAM'],
         body: z.object({
           email: z.string().email(),
@@ -433,18 +480,40 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const { email } = request.body;
+      const normalizedEmail = request.body.email.trim().toLowerCase();
+      const { password } = request.body;
+
       const user = await db.query.users.findFirst({
-        where: eq(users.email, email),
+        where: eq(users.email, normalizedEmail),
       });
 
       if (!user) {
         return reply.status(401).send({
-          error: 'Invalid test account email. Please select or enter a valid test user.',
+          error: 'Invalid email or password.',
         });
       }
 
-      setMockUserEmail(email);
+      if (user.status && user.status !== 'ACTIVE') {
+        return reply.status(403).send({
+          error: 'This user account is inactive. Please contact an administrator.',
+        });
+      }
+
+      if (!user.passwordHash) {
+        return reply.status(403).send({
+          error: 'Please set a password for your account before signing in.',
+          code: 'PASSWORD_SETUP_REQUIRED',
+        });
+      }
+
+      if (!password || !(await verifyPassword(password, user.passwordHash))) {
+        return reply.status(401).send({
+          error: 'Invalid email or password.',
+        });
+      }
+
+      setMockUserEmail(user.email);
+      const roleInfo = getRoleFromPermissions(user.globalPermissions);
 
       return reply.send({
         data: {
@@ -455,7 +524,127 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
             fullName: user.fullName,
             userType: user.userType,
             globalPermissions: user.globalPermissions.toString(),
+            roleName: roleInfo.roleName,
+            roleTier: roleInfo.roleTier,
+            mustChangePassword: Boolean(user.mustChangePassword),
           },
+        },
+      });
+    }
+  );
+
+  // 4b. First-Login Password Setup (for existing users with no passwordHash yet)
+  app.post(
+    '/setup-password',
+    {
+      schema: {
+        description: 'Set initial password on first login for an existing user without a password',
+        tags: ['Authentication & IAM'],
+        body: z.object({
+          email: z.string().email(),
+          password: z.string().min(8),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const normalizedEmail = request.body.email.trim().toLowerCase();
+      const { password } = request.body;
+
+      const user = await db.query.users.findFirst({
+        where: eq(users.email, normalizedEmail),
+      });
+
+      if (!user) {
+        return reply.status(404).send({ error: 'User account not found.' });
+      }
+
+      if (user.status && user.status !== 'ACTIVE') {
+        return reply.status(403).send({ error: 'This user account is inactive.' });
+      }
+
+      if (user.passwordHash) {
+        return reply.status(400).send({ error: 'Password is already configured for this account.' });
+      }
+
+      const policyError = validatePasswordPolicy(password);
+      if (policyError) {
+        return reply.status(400).send({ error: policyError });
+      }
+
+      const passwordHash = await hashPassword(password);
+      await db
+        .update(users)
+        .set({ passwordHash, mustChangePassword: false, updatedAt: new Date() })
+        .where(eq(users.id, user.id));
+
+      setMockUserEmail(user.email);
+      const roleInfo = getRoleFromPermissions(user.globalPermissions);
+
+      return reply.send({
+        data: {
+          message: 'Password set and signed in successfully',
+          user: {
+            id: user.id,
+            email: user.email,
+            fullName: user.fullName,
+            userType: user.userType,
+            globalPermissions: user.globalPermissions.toString(),
+            roleName: roleInfo.roleName,
+            roleTier: roleInfo.roleTier,
+            mustChangePassword: Boolean(user.mustChangePassword),
+          },
+        },
+      });
+    }
+  );
+
+  // 4c. Change Own Password (Authenticated User)
+  app.post(
+    '/change-password',
+    {
+      schema: {
+        description: 'Change password for the currently signed-in user',
+        tags: ['Authentication & IAM'],
+        body: z.object({
+          currentPassword: z.string().optional(),
+          newPassword: z.string().min(8),
+        }),
+      },
+    },
+    async (request, reply) => {
+      const caller = await getCurrentUser(request);
+      if (!caller) {
+        return reply.status(401).send({ error: 'Authentication required' });
+      }
+
+      const { currentPassword, newPassword } = request.body;
+      const dbUser = await db.query.users.findFirst({
+        where: eq(users.id, caller.id),
+      });
+      if (!dbUser) {
+        return reply.status(404).send({ error: 'User not found' });
+      }
+
+      if (dbUser.passwordHash) {
+        if (!currentPassword || !(await verifyPassword(currentPassword, dbUser.passwordHash))) {
+          return reply.status(401).send({ error: 'Current password is incorrect.' });
+        }
+      }
+
+      const policyError = validatePasswordPolicy(newPassword);
+      if (policyError) {
+        return reply.status(400).send({ error: policyError });
+      }
+
+      const passwordHash = await hashPassword(newPassword);
+      await db
+        .update(users)
+        .set({ passwordHash, mustChangePassword: false, updatedAt: new Date() })
+        .where(eq(users.id, caller.id));
+
+      return reply.send({
+        data: {
+          message: 'Password updated successfully.',
         },
       });
     }
@@ -471,9 +660,11 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (_request, reply) => {
+      clearMockUserSession();
       return reply.send({
         data: {
           message: 'Logged out successfully',
+          loggedOut: true,
         },
       });
     }

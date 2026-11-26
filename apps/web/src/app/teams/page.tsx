@@ -45,13 +45,15 @@ export default function TeamsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingTeam, setEditingTeam] = useState<Team | null>(null);
-  const [managingMembersTeam, setManagingMembersTeam] = useState<Team | null>(null);
+  const [managingMembersTeamId, setManagingMembersTeamId] = useState<string | null>(null);
 
   // Queries
   const { data: teams = [], isLoading } = useQuery({
     queryKey: ['teams'],
     queryFn: fetchTeams,
   });
+
+  const managingMembersTeam = teams.find((t) => t.id === managingMembersTeamId) || null;
 
   const { data: availableUsers = [] } = useQuery({
     queryKey: ['availableUsers'],
@@ -308,7 +310,7 @@ export default function TeamsPage() {
                   {/* Footer Action Buttons */}
                   <div className="mt-5 pt-3.5 border-t border-slate-100 dark:border-slate-800/80 flex items-center justify-between gap-2">
                     <button
-                      onClick={() => setManagingMembersTeam(team)}
+                      onClick={() => setManagingMembersTeamId(team.id)}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 text-xs font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 transition cursor-pointer"
                     >
                       <UserPlus className="h-3.5 w-3.5" />
@@ -385,7 +387,7 @@ export default function TeamsPage() {
         <ManageTeamMembersModal
           team={managingMembersTeam}
           isOpen={!!managingMembersTeam}
-          onClose={() => setManagingMembersTeam(null)}
+          onClose={() => setManagingMembersTeamId(null)}
           availableUsers={availableUsers}
           canManage={canManageTeams || (currentUser?.id === managingMembersTeam.leadId)}
           onSuccess={() => {
@@ -525,18 +527,32 @@ function CreateTeamModal({
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
               Designated Team Lead
             </label>
-            <select
-              value={leadId}
-              onChange={(e) => setLeadId(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
-            >
-              <option value="">-- No Lead Assigned --</option>
-              {availableUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.fullName} ({u.email})
-                </option>
-              ))}
-            </select>
+            {(() => {
+              const teamLeadUsers = availableUsers.filter(
+                (u) => u.roleTier === 2 || (u.roleName || '').toLowerCase().includes('team lead')
+              );
+              return (
+                <>
+                  <select
+                    value={leadId}
+                    onChange={(e) => setLeadId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="">-- No Lead Assigned --</option>
+                    {teamLeadUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.fullName} ({u.email})
+                      </option>
+                    ))}
+                  </select>
+                  {teamLeadUsers.length === 0 && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                      No users with the Team Lead role found. Update a user&apos;s role to Team Lead in Settings → Users first.
+                    </p>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
@@ -633,18 +649,32 @@ function EditTeamModal({
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
               Team Lead
             </label>
-            <select
-              value={leadId}
-              onChange={(e) => setLeadId(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
-            >
-              <option value="">-- No Lead Assigned --</option>
-              {availableUsers.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.fullName} ({u.email})
-                </option>
-              ))}
-            </select>
+            {(() => {
+              const teamLeadUsers = availableUsers.filter(
+                (u) => u.roleTier === 2 || (u.roleName || '').toLowerCase().includes('team lead')
+              );
+              return (
+                <>
+                  <select
+                    value={leadId}
+                    onChange={(e) => setLeadId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="">-- No Lead Assigned --</option>
+                    {teamLeadUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.fullName} ({u.email})
+                      </option>
+                    ))}
+                  </select>
+                  {teamLeadUsers.length === 0 && (
+                    <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                      No users with the Team Lead role available.
+                    </p>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
@@ -690,17 +720,32 @@ function ManageTeamMembersModal({
   const [selectedUserId, setSelectedUserId] = useState(availableUsers[0]?.id || '');
   const [selectedRole, setSelectedRole] = useState<'MEMBER' | 'LEAD'>('MEMBER');
   const [isAdding, setIsAdding] = useState(false);
+  const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  React.useEffect(() => {
+    if (!selectedUserId && availableUsers.length > 0) {
+      setSelectedUserId(availableUsers[0].id);
+    }
+  }, [availableUsers, selectedUserId]);
 
   const handleAddMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedUserId) return;
+    const targetUserId = selectedUserId || availableUsers[0]?.id;
+    if (!targetUserId) {
+      setErrorMsg('Please select a user to add');
+      return;
+    }
     setIsAdding(true);
+    setErrorMsg('');
     try {
       await addTeamMember(team.id, {
-        userId: selectedUserId,
+        userId: targetUserId,
         role: selectedRole,
       });
       onSuccess();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to add member');
     } finally {
       setIsAdding(false);
     }
@@ -722,6 +767,12 @@ function ManageTeamMembersModal({
         </div>
 
         {/* Add Member Form */}
+        {errorMsg && (
+          <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-xs text-rose-600 dark:text-rose-300">
+            {errorMsg}
+          </div>
+        )}
+
         {canManage && (
           <form
             onSubmit={handleAddMember}
@@ -732,7 +783,12 @@ function ManageTeamMembersModal({
               onChange={(e) => setSelectedUserId(e.target.value)}
               className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100"
             >
-              {availableUsers.map((u) => (
+              {(selectedRole === 'LEAD'
+                ? availableUsers.filter(
+                    (u) => u.roleTier === 2 || (u.roleName || '').toLowerCase().includes('team lead')
+                  )
+                : availableUsers
+              ).map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.fullName} ({u.email})
                 </option>
@@ -741,7 +797,17 @@ function ManageTeamMembersModal({
 
             <select
               value={selectedRole}
-              onChange={(e) => setSelectedRole(e.target.value as 'MEMBER' | 'LEAD')}
+              onChange={(e) => {
+                const nextRole = e.target.value as 'MEMBER' | 'LEAD';
+                setSelectedRole(nextRole);
+                const pool =
+                  nextRole === 'LEAD'
+                    ? availableUsers.filter(
+                        (u) => u.roleTier === 2 || (u.roleName || '').toLowerCase().includes('team lead')
+                      )
+                    : availableUsers;
+                setSelectedUserId(pool[0]?.id || '');
+              }}
               className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 font-semibold"
             >
               <option value="MEMBER">Member</option>
@@ -760,51 +826,109 @@ function ManageTeamMembersModal({
 
         {/* Existing Members Roster */}
         <div className="space-y-2 max-h-72 overflow-y-auto">
-          {team.members.map((m) => (
-            <div
-              key={m.id}
-              className="flex items-center justify-between p-3 rounded-xl border border-slate-100 dark:border-slate-800/80 bg-white dark:bg-slate-900 text-xs"
-            >
-              <div className="flex items-center gap-2.5">
-                <div className="h-7 w-7 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center">
-                  {m.user?.fullName ? m.user.fullName[0] : 'U'}
-                </div>
-                <div>
-                  <div className="font-bold text-slate-900 dark:text-slate-100">
-                    {m.user?.fullName || 'User'}
+          {team.members.map((m) => {
+            const isPrimaryLead = team.leadId === m.userId;
+            const isBusy = updatingUserId === m.userId;
+
+            return (
+              <div
+                key={m.id}
+                className="flex items-center justify-between gap-2 p-3 rounded-xl border border-slate-100 dark:border-slate-800/80 bg-white dark:bg-slate-900 text-xs"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="h-7 w-7 rounded-full bg-blue-600 text-white text-[11px] font-bold flex items-center justify-center shrink-0">
+                    {m.user?.fullName ? m.user.fullName[0] : 'U'}
                   </div>
-                  <div className="text-[10px] text-slate-400">{m.user?.email}</div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-slate-900 dark:text-slate-100 truncate">
+                        {m.user?.fullName || 'User'}
+                      </span>
+                      {isPrimaryLead && (
+                        <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 text-[9px] font-bold shrink-0">
+                          Primary Lead
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate">{m.user?.email}</div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  {canManage ? (
+                    <select
+                      value={m.role}
+                      disabled={isBusy}
+                      onChange={async (e) => {
+                        const nextRole = e.target.value as 'MEMBER' | 'LEAD';
+                        if (nextRole === m.role) return;
+                        setErrorMsg('');
+                        setUpdatingUserId(m.userId);
+                        try {
+                          await updateTeamMemberRole(team.id, m.userId, nextRole);
+                          onSuccess();
+                        } catch (err: unknown) {
+                          setErrorMsg(
+                            err instanceof Error ? err.message : 'Failed to update member role'
+                          );
+                        } finally {
+                          setUpdatingUserId(null);
+                        }
+                      }}
+                      className={`px-2 py-1 rounded-lg border text-[11px] font-bold cursor-pointer disabled:opacity-50 ${
+                        m.role === 'LEAD'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
+                          : 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                      }`}
+                      title="Change member role in team"
+                    >
+                      <option value="MEMBER">MEMBER</option>
+                      <option value="LEAD">LEAD</option>
+                    </select>
+                  ) : (
+                    <span
+                      className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                        m.role === 'LEAD'
+                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
+                          : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                      }`}
+                    >
+                      {m.role}
+                    </span>
+                  )}
+
+                  {canManage && (
+                    <button
+                      type="button"
+                      disabled={isBusy}
+                      onClick={async () => {
+                        const promptMsg = isPrimaryLead
+                          ? `Remove ${m.user?.fullName || 'user'} from this team? They are currently the Primary Lead and will be unassigned as lead.`
+                          : `Remove ${m.user?.fullName || 'user'} from this team?`;
+                        if (!confirm(promptMsg)) return;
+                        setErrorMsg('');
+                        setUpdatingUserId(m.userId);
+                        try {
+                          await removeTeamMember(team.id, m.userId);
+                          onSuccess();
+                        } catch (err: unknown) {
+                          setErrorMsg(
+                            err instanceof Error ? err.message : 'Failed to remove member'
+                          );
+                        } finally {
+                          setUpdatingUserId(null);
+                        }
+                      }}
+                      className="p-1 text-slate-400 hover:text-rose-600 rounded-md transition cursor-pointer disabled:opacity-50"
+                      title={isPrimaryLead ? 'Remove Primary Lead from team' : 'Remove from team'}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
-
-              <div className="flex items-center gap-2">
-                <span
-                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                    m.role === 'LEAD'
-                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400'
-                      : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                  }`}
-                >
-                  {m.role}
-                </span>
-
-                {canManage && (
-                  <button
-                    onClick={async () => {
-                      if (confirm(`Remove ${m.user?.fullName || 'user'} from this team?`)) {
-                        await removeTeamMember(team.id, m.userId);
-                        onSuccess();
-                      }
-                    }}
-                    className="p-1 text-slate-400 hover:text-rose-600 rounded-md transition cursor-pointer"
-                    title="Remove from team"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
 
           {team.members.length === 0 && (
             <div className="py-6 text-center text-xs text-slate-400 italic">
