@@ -354,9 +354,101 @@ export default function PortfolioDashboardPage() {
         </div>
       </section>
 
-      {/* 2. INTERACTIVE CALENDAR & SCHEDULE TIMELINE MATCHING REFERENCE */}
+      {/* 2. EXECUTIVE KPI TELEMETRY & WORKLOAD STATS (CLICKABLE CARDS) */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Total Projects -> /projects */}
+        <div
+          onClick={() => router.push('/projects')}
+          className="p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-2xs hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition cursor-pointer group"
+          title="Click to view all projects in portfolio"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+            <span className="font-semibold uppercase tracking-wider text-[10px] group-hover:text-blue-600 transition">
+              Total Projects
+            </span>
+            <FolderGit2 className="h-4 w-4 text-blue-600 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="text-3xl font-extrabold text-slate-900 dark:text-slate-100 group-hover:text-blue-600 transition">
+            {summary?.totalProjects ?? 0}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1 font-medium flex items-center justify-between">
+            <span>{summary?.totalTicketsCount ?? 0} active tasks in flight</span>
+            <span className="text-[10px] text-blue-500 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">View &rarr;</span>
+          </p>
+        </div>
+
+        {/* Card 2: Completion Rate -> /reports */}
+        <div
+          onClick={() => router.push('/reports')}
+          className="p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-2xs hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition cursor-pointer group"
+          title="Click to view Burndown & Velocity Reports"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+            <span className="font-semibold uppercase tracking-wider text-[10px] group-hover:text-emerald-600 transition">
+              Completion
+            </span>
+            <CheckCircle2 className="h-4 w-4 text-emerald-500 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400">
+            {summary?.completionRate ?? 0}%
+          </div>
+          <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
+            <div
+              style={{ width: `${summary?.completionRate ?? 0}%` }}
+              className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+            />
+          </div>
+          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity text-right">
+            Open Agile Reports &rarr;
+          </div>
+        </div>
+
+        {/* Card 3: At-Risk SLA -> /table?filter=at_risk */}
+        <div
+          onClick={() => router.push('/table?filter=at_risk')}
+          className="p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-2xs hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition cursor-pointer group"
+          title="Click to inspect SLA at-risk tasks"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+            <span className="font-semibold uppercase tracking-wider text-[10px] group-hover:text-rose-600 transition">
+              At-Risk SLA
+            </span>
+            <Flame className="h-4 w-4 text-rose-500 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="text-3xl font-extrabold text-rose-600 dark:text-rose-400">
+            {summary?.slaAtRiskCount ?? 0}
+          </div>
+          <p className="text-[11px] text-rose-500/90 mt-1 font-medium flex items-center justify-between">
+            <span>Within 4h of target deadline</span>
+            <span className="text-[10px] text-rose-600 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">Inspect &rarr;</span>
+          </p>
+        </div>
+
+        {/* Card 4: Blockers -> /table?filter=blocked */}
+        <div
+          onClick={() => router.push('/table?filter=blocked')}
+          className="p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-2xs hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition cursor-pointer group"
+          title="Click to inspect task dependencies and blockers"
+        >
+          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
+            <span className="font-semibold uppercase tracking-wider text-[10px] group-hover:text-amber-600 transition">
+              Blockers
+            </span>
+            <AlertTriangle className="h-4 w-4 text-amber-500 group-hover:scale-110 transition-transform" />
+          </div>
+          <div className="text-3xl font-extrabold text-amber-600 dark:text-amber-400">
+            {crossProjectBlockers.length}
+          </div>
+          <p className="text-[11px] text-amber-500/90 mt-1 font-medium flex items-center justify-between">
+            <span>Dependency holds</span>
+            <span className="text-[10px] text-amber-600 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">View Tasks &rarr;</span>
+          </p>
+        </div>
+      </section>
+
+      {/* 3. INTERACTIVE CALENDAR, TEAMS & FAVORITES BELOW STATS */}
       <section className="p-6 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-2xs space-y-6">
-        {/* Navigation Tabs matching Reference: Calender | Teams | Favorite */}
+        {/* Navigation Tabs: Calendar | Teams | Favorites */}
         <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 pb-4">
           <div className="flex items-center gap-6 text-sm font-semibold text-slate-400 dark:text-slate-500">
             <button
@@ -366,7 +458,7 @@ export default function PortfolioDashboardPage() {
                 : 'hover:text-slate-700 dark:hover:text-slate-300'
                 }`}
             >
-              Calender
+              Calendar
             </button>
             <button
               onClick={() => setActiveTab('TEAMS')}
@@ -384,7 +476,7 @@ export default function PortfolioDashboardPage() {
                 : 'hover:text-slate-700 dark:hover:text-slate-300'
                 }`}
             >
-              Favorite
+              Favorites
             </button>
           </div>
 
@@ -571,98 +663,6 @@ export default function PortfolioDashboardPage() {
             </div>
           );
         })()}
-      </section>
-
-      {/* 3. EXECUTIVE KPI TELEMETRY & WORKLOAD STATS (CLICKABLE CARDS) */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Card 1: Total Projects -> /projects */}
-        <div
-          onClick={() => router.push('/projects')}
-          className="p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-2xs hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition cursor-pointer group"
-          title="Click to view all projects in portfolio"
-        >
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[10px] group-hover:text-blue-600 transition">
-              Total Projects
-            </span>
-            <FolderGit2 className="h-4 w-4 text-blue-600 group-hover:scale-110 transition-transform" />
-          </div>
-          <div className="text-3xl font-extrabold text-slate-900 dark:text-slate-100 group-hover:text-blue-600 transition">
-            {summary?.totalProjects ?? 0}
-          </div>
-          <p className="text-[11px] text-slate-400 mt-1 font-medium flex items-center justify-between">
-            <span>{summary?.totalTicketsCount ?? 0} active tasks in flight</span>
-            <span className="text-[10px] text-blue-500 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">View &rarr;</span>
-          </p>
-        </div>
-
-        {/* Card 2: Completion Rate -> /reports */}
-        <div
-          onClick={() => router.push('/reports')}
-          className="p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-2xs hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition cursor-pointer group"
-          title="Click to view Burndown & Velocity Reports"
-        >
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[10px] group-hover:text-emerald-600 transition">
-              Completion
-            </span>
-            <CheckCircle2 className="h-4 w-4 text-emerald-500 group-hover:scale-110 transition-transform" />
-          </div>
-          <div className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400">
-            {summary?.completionRate ?? 0}%
-          </div>
-          <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
-            <div
-              style={{ width: `${summary?.completionRate ?? 0}%` }}
-              className="bg-emerald-500 h-full rounded-full transition-all duration-500"
-            />
-          </div>
-          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-1.5 opacity-0 group-hover:opacity-100 transition-opacity text-right">
-            Open Agile Reports &rarr;
-          </div>
-        </div>
-
-        {/* Card 3: At-Risk SLA -> /table?filter=at_risk */}
-        <div
-          onClick={() => router.push('/table?filter=at_risk')}
-          className="p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-2xs hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition cursor-pointer group"
-          title="Click to inspect SLA at-risk tasks"
-        >
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[10px] group-hover:text-rose-600 transition">
-              At-Risk SLA
-            </span>
-            <Flame className="h-4 w-4 text-rose-500 group-hover:scale-110 transition-transform" />
-          </div>
-          <div className="text-3xl font-extrabold text-rose-600 dark:text-rose-400">
-            {summary?.slaAtRiskCount ?? 0}
-          </div>
-          <p className="text-[11px] text-rose-500/90 mt-1 font-medium flex items-center justify-between">
-            <span>Within 4h of target deadline</span>
-            <span className="text-[10px] text-rose-600 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">Inspect &rarr;</span>
-          </p>
-        </div>
-
-        {/* Card 4: Blockers -> /table?filter=blocked */}
-        <div
-          onClick={() => router.push('/table?filter=blocked')}
-          className="p-5 rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shadow-2xs hover:shadow-md hover:-translate-y-0.5 active:scale-[0.98] transition cursor-pointer group"
-          title="Click to inspect task dependencies and blockers"
-        >
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-2">
-            <span className="font-semibold uppercase tracking-wider text-[10px] group-hover:text-amber-600 transition">
-              Blockers
-            </span>
-            <AlertTriangle className="h-4 w-4 text-amber-500 group-hover:scale-110 transition-transform" />
-          </div>
-          <div className="text-3xl font-extrabold text-amber-600 dark:text-amber-400">
-            {crossProjectBlockers.length}
-          </div>
-          <p className="text-[11px] text-amber-500/90 mt-1 font-medium flex items-center justify-between">
-            <span>Dependency holds</span>
-            <span className="text-[10px] text-amber-600 font-semibold opacity-0 group-hover:opacity-100 transition-opacity">View Tasks &rarr;</span>
-          </p>
-        </div>
       </section>
 
       {/* Ticket Detail Modal */}

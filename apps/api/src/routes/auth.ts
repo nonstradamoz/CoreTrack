@@ -7,6 +7,7 @@ import {
   teams,
   teamMembers,
   projects,
+  projectTeams,
   projectMembers,
   tickets,
   ticketComments,
@@ -14,6 +15,10 @@ import {
   ticketApprovals,
   roles,
   eq,
+  and,
+  or,
+  isNull,
+  inArray,
   desc,
 } from '@coretrack/db';
 import { Permissions, StandardRoleBitmasks } from '@coretrack/shared';
@@ -114,6 +119,194 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           mustChangePassword: Boolean(
             dbUserFlags?.mustChangePassword || !dbUserFlags?.passwordHash
           ),
+        },
+      });
+    }
+  );
+
+  // 1b. Get Detailed Profile & Live Statuses for Current User
+  app.get(
+    '/me/profile',
+    {
+      schema: {
+        description: 'Get full profile, teams, projects, and live task/SLA statuses for the current user',
+        tags: ['Authentication & IAM'],
+      },
+    },
+    async (request, reply) => {
+      const caller = await getCurrentUser(request);
+      if (!caller) {
+        return reply.status(401).send({ error: 'Not authenticated' });
+      }
+
+      const [dbUser, tierInfo, myTeamRows, myProjMemberRows, myTickets] = await Promise.all([
+        db.query.users.findFirst({
+          where: eq(users.id, caller.id),
+        }),
+        getUserRoleTier(caller.id),
+        db.query.teamMembers.findMany({
+          where: eq(teamMembers.userId, caller.id),
+          with: {
+            team: {
+              columns: { id: true, name: true, keyPrefix: true },
+            },
+          },
+        }),
+        db.query.projectMembers.findMany({
+          where: eq(projectMembers.userId, caller.id),
+          with: {
+            project: {
+              columns: { id: true, key: true, name: true, status: true },
+            },
+            role: {
+              columns: { name: true },
+            },
+          },
+        }),
+        db.query.tickets.findMany({
+          where: and(
+            isNull(tickets.deletedAt),
+            or(
+              eq(tickets.assigneeId, caller.id),
+              and(isNull(tickets.assigneeId), eq(tickets.reporterId, caller.id))
+            )
+          ),
+          with: {
+            project: {
+              columns: { id: true, key: true, name: true },
+            },
+          },
+          orderBy: desc(tickets.updatedAt),
+        }),
+      ]);
+
+      if (!dbUser) {
+        return reply.status(404).send({ error: 'User not found' });
+      }
+
+      const myTeamIds = myTeamRows.map((tm) => tm.teamId);
+      const allProjects = await db.query.projects.findMany({
+        with: {
+          assignedTeams: true,
+        },
+      });
+
+      const projectMap = new Map<
+        string,
+        { id: string; key: string; name: string; status: string; relation: string }
+      >();
+
+      for (const pm of myProjMemberRows) {
+        if (pm.project) {
+          projectMap.set(pm.project.id, {
+            id: pm.project.id,
+            key: pm.project.key,
+            name: pm.project.name,
+            status: pm.project.status,
+            relation: pm.role?.name || 'Member',
+          });
+        }
+      }
+
+      for (const p of allProjects) {
+        const isPm = p.projectManagerId === caller.id;
+        const isReviewer = p.reviewerId === caller.id;
+        const viaTeam =
+          (p.primaryTeamId && myTeamIds.includes(p.primaryTeamId)) ||
+          p.assignedTeams.some((at) => myTeamIds.includes(at.teamId));
+        if ((isPm || isReviewer || viaTeam) && !projectMap.has(p.id)) {
+          projectMap.set(p.id, {
+            id: p.id,
+            key: p.key,
+            name: p.name,
+            status: p.status,
+            relation: isPm ? 'Project Manager' : isReviewer ? 'Reviewer' : 'Team Allocation',
+          });
+        }
+      }
+
+      const now = Date.now();
+      const doneSet = new Set(['DONE', 'RESOLVED', 'CLOSED']);
+      let completed = 0;
+      let inProgress = 0;
+      let inReview = 0;
+      let pendingApproval = 0;
+      let blocked = 0;
+      let overdue = 0;
+      let storyPointsTotal = 0;
+      let slaTracked = 0;
+      let slaBreached = 0;
+
+      const taskItems = myTickets.map((t) => {
+        const st = t.status.toUpperCase();
+        const isDone = doneSet.has(st);
+        const isOverdue = !isDone && st !== 'CANCELED' && t.dueDate ? new Date(t.dueDate).getTime() < now : false;
+
+        if (isDone) completed++;
+        if (st === 'IN_PROGRESS') inProgress++;
+        if (st === 'IN_REVIEW') inReview++;
+        if (st === 'PENDING_APPROVAL') pendingApproval++;
+        if (st === 'BLOCKED') blocked++;
+        if (isOverdue) overdue++;
+        storyPointsTotal += t.storyPoints || 0;
+
+        if (t.slaResolutionDueAt) {
+          slaTracked++;
+          const dueMs = new Date(t.slaResolutionDueAt).getTime();
+          const checkMs = isDone ? new Date(t.updatedAt).getTime() : now;
+          if (checkMs > dueMs) slaBreached++;
+        }
+
+        return {
+          id: t.id,
+          ticketKey: t.ticketKey,
+          title: t.title,
+          status: t.status,
+          priority: t.priority,
+          storyPoints: t.storyPoints ?? null,
+          dueDate: t.dueDate ? t.dueDate.toISOString() : null,
+          isOverdue,
+          projectKey: t.project?.key || '',
+          projectName: t.project?.name || '',
+          updatedAt: t.updatedAt.toISOString(),
+        };
+      });
+
+      const slaComplianceRate =
+        slaTracked > 0 ? Math.round(((slaTracked - slaBreached) / slaTracked) * 100) : 100;
+
+      return reply.send({
+        data: {
+          user: {
+            id: dbUser.id,
+            email: dbUser.email,
+            fullName: dbUser.fullName,
+            designation: dbUser.designation || null,
+            userType: dbUser.userType,
+            status: dbUser.status,
+            roleName: tierInfo.roleName || 'Member',
+            roleTier: tierInfo.tier,
+            createdAt: dbUser.createdAt.toISOString(),
+          },
+          teams: myTeamRows.map((tm) => ({
+            id: tm.team.id,
+            name: tm.team.name,
+            keyPrefix: tm.team.keyPrefix,
+            role: tm.role,
+          })),
+          projects: Array.from(projectMap.values()),
+          stats: {
+            totalAssigned: taskItems.length,
+            completed,
+            inProgress,
+            inReview,
+            pendingApproval,
+            blocked,
+            overdue,
+            storyPointsTotal,
+            slaComplianceRate,
+          },
+          tasks: taskItems,
         },
       });
     }

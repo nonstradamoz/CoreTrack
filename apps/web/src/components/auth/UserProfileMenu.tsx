@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchCurrentUser, logoutUser, changeOwnPassword } from '../../lib/api';
 import { useTheme } from '../theme/ThemeProvider';
-import { Moon, Sun, ChevronDown, LogOut, KeyRound, X, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Moon, Sun, ChevronDown, LogOut, KeyRound, X, AlertCircle, CheckCircle2, Eye, EyeOff, User } from 'lucide-react';
 
 export function UserProfileMenu() {
   const router = useRouter();
@@ -15,6 +16,9 @@ export function UserProfileMenu() {
   const [currentPw, setCurrentPw] = useState('');
   const [newPw, setNewPw] = useState('');
   const [confirmPw, setConfirmPw] = useState('');
+  const [showCurrentPw, setShowCurrentPw] = useState(false);
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [showConfirmPw, setShowConfirmPw] = useState(false);
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwSuccess, setPwSuccess] = useState<string | null>(null);
   const { theme, toggleTheme } = useTheme();
@@ -145,6 +149,15 @@ export function UserProfileMenu() {
               </span>
             </button>
 
+            <Link
+              href="/profile"
+              onClick={() => setIsOpen(false)}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+            >
+              <User className="h-3.5 w-3.5 text-emerald-500" />
+              <span>My Profile &amp; Statuses</span>
+            </Link>
+
             <button
               onClick={() => {
                 setIsOpen(false);
@@ -214,41 +227,71 @@ export function UserProfileMenu() {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Current Password
                 </label>
-                <input
-                  type="password"
-                  value={currentPw}
-                  onChange={(e) => setCurrentPw(e.target.value)}
-                  placeholder="Enter current password"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100"
-                />
+                <div className="relative">
+                  <input
+                    type={showCurrentPw ? 'text' : 'password'}
+                    value={currentPw}
+                    onChange={(e) => setCurrentPw(e.target.value)}
+                    placeholder="Enter current password"
+                    className="w-full pl-3 pr-9 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPw((v) => !v)}
+                    className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    title={showCurrentPw ? 'Hide password' : 'View password'}
+                  >
+                    {showCurrentPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   New Password
                 </label>
-                <input
-                  type="password"
-                  required
-                  value={newPw}
-                  onChange={(e) => setNewPw(e.target.value)}
-                  placeholder="8+ chars, upper, lower, number"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100"
-                />
+                <div className="relative">
+                  <input
+                    type={showNewPw ? 'text' : 'password'}
+                    required
+                    value={newPw}
+                    onChange={(e) => setNewPw(e.target.value)}
+                    placeholder="8+ chars, upper, lower, number"
+                    className="w-full pl-3 pr-9 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPw((v) => !v)}
+                    className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    title={showNewPw ? 'Hide password' : 'View password'}
+                  >
+                    {showNewPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Confirm New Password
                 </label>
-                <input
-                  type="password"
-                  required
-                  value={confirmPw}
-                  onChange={(e) => setConfirmPw(e.target.value)}
-                  placeholder="Re-enter new password"
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100"
-                />
+                <div className="relative">
+                  <input
+                    type={showConfirmPw ? 'text' : 'password'}
+                    required
+                    value={confirmPw}
+                    onChange={(e) => setConfirmPw(e.target.value)}
+                    placeholder="Re-enter new password"
+                    className="w-full pl-3 pr-9 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPw((v) => !v)}
+                    className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                    title={showConfirmPw ? 'Hide password' : 'View password'}
+                  >
+                    {showConfirmPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

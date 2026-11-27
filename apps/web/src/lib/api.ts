@@ -519,6 +519,64 @@ export async function fetchCurrentUser(): Promise<UserPersona> {
   return json.data;
 }
 
+export interface MyProfileResponse {
+  user: {
+    id: string;
+    email: string;
+    fullName: string;
+    designation: string | null;
+    userType: string;
+    status: string;
+    roleName: string;
+    roleTier: number;
+    createdAt: string;
+  };
+  teams: Array<{
+    id: string;
+    name: string;
+    keyPrefix: string;
+    role: 'LEAD' | 'MEMBER' | string;
+  }>;
+  projects: Array<{
+    id: string;
+    key: string;
+    name: string;
+    status: string;
+    relation: string;
+  }>;
+  stats: {
+    totalAssigned: number;
+    completed: number;
+    inProgress: number;
+    inReview: number;
+    pendingApproval: number;
+    blocked: number;
+    overdue: number;
+    storyPointsTotal: number;
+    slaComplianceRate: number;
+  };
+  tasks: Array<{
+    id: string;
+    ticketKey: string;
+    title: string;
+    status: string;
+    priority: string;
+    storyPoints: number | null;
+    dueDate: string | null;
+    isOverdue: boolean;
+    projectKey: string;
+    projectName: string;
+    updatedAt: string;
+  }>;
+}
+
+export async function fetchMyProfile(): Promise<MyProfileResponse> {
+  const res = await fetch(`${API_URL}/api/v1/auth/me/profile`);
+  if (!res.ok) throw new Error('Failed to load profile');
+  const json = await res.json();
+  return json.data;
+}
+
 export async function fetchAvailableUsers(): Promise<UserPersona[]> {
   const res = await fetch(`${API_URL}/api/v1/auth/users`);
   if (!res.ok) throw new Error('Failed to fetch user directory');

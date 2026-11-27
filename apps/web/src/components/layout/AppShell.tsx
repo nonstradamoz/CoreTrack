@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useProject } from '../../context/ProjectContext';
-import { fetchTickets, fetchCurrentUser, createTicket, fetchChatChannels, Ticket } from '../../lib/api';
+import { fetchTickets, fetchCurrentUser, createTicket, fetchChatChannels, logoutUser, Ticket } from '../../lib/api';
 import { ChatWorkspace } from '../chat/ChatWorkspace';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { NotificationsPopover } from '../notifications/NotificationsPopover';
@@ -54,6 +54,8 @@ import {
   Settings,
   Mail,
   MessageCircle,
+  LogOut,
+  User,
 } from 'lucide-react';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -84,6 +86,7 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
   const [isCreateProjectModalOpen, setIsCreateProjectModalOpen] = useState(false);
   const [isDailyStatusDrawerOpen, setIsDailyStatusDrawerOpen] = useState(false);
   const [isChatDrawerOpen, setIsChatDrawerOpen] = useState(false);
+  const [isSidebarProfileOpen, setIsSidebarProfileOpen] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
 
   // Live Digital Clock state matching reference: "20:12:44", "Wednesday, 11 May"
@@ -570,8 +573,72 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
 
-        {/* Sidebar Footer: Pill Theme Switcher matching Reference (Dark | Light) */}
-        <div className="p-3 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/40">
+        {/* Sidebar Footer: Profile, Logout & Theme Switcher */}
+        <div className="p-3 border-t border-slate-100 dark:border-slate-800/80 bg-slate-50/50 dark:bg-slate-900/40 space-y-2.5">
+          {/* Profile & Logout Controls */}
+          {!isCollapsed ? (
+            <div className="space-y-1">
+              <Link
+                href="/profile"
+                title="View Profile & Statuses"
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer text-left ${
+                  pathname.startsWith('/profile')
+                    ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
+                    : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                <div className="h-7 w-7 rounded-lg bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0">
+                  {initials}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-bold text-slate-900 dark:text-slate-100 leading-tight">
+                    {currentUser?.fullName || 'Profile'}
+                  </div>
+                  <div className="truncate text-[10px] text-slate-400 leading-tight">
+                    {currentUser?.roleName || 'Member'}
+                  </div>
+                </div>
+                <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              </Link>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  await logoutUser();
+                  queryClient.clear();
+                  router.push('/login');
+                }}
+                title="Log out"
+                className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+              >
+                <LogOut className="h-4 w-4 shrink-0" />
+                <span>Log out</span>
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <Link
+                href="/profile"
+                title={currentUser?.fullName ? `Profile: ${currentUser.fullName}` : 'Profile'}
+                className="w-full flex items-center justify-center p-2 rounded-xl bg-blue-600 text-white font-bold text-xs hover:bg-blue-700 transition cursor-pointer"
+              >
+                {initials}
+              </Link>
+              <button
+                type="button"
+                onClick={async () => {
+                  await logoutUser();
+                  queryClient.clear();
+                  router.push('/login');
+                }}
+                title="Log out"
+                className="w-full flex items-center justify-center p-2 rounded-xl text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition cursor-pointer"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
           {!isCollapsed ? (
             <div className="flex items-center justify-center p-1 rounded-full bg-slate-200/80 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xs">
               <button
@@ -933,6 +1000,67 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
       {/* First Sign-In Forced Password Change Modal */}
       {currentUser?.mustChangePassword && (
         <ForcePasswordChangeModal userEmail={currentUser.email} />
+      )}
+
+      {/* Sidebar Profile Details Modal */}
+      {isSidebarProfileOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/50 backdrop-blur-xs p-4">
+          <div className="fixed inset-0" onClick={() => setIsSidebarProfileOpen(false)} aria-hidden="true" />
+          <div className="relative z-10 w-full max-w-sm rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xl p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="h-10 w-10 rounded-xl bg-blue-600 text-white font-bold text-sm flex items-center justify-center shrink-0">
+                  {initials}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                    {currentUser?.fullName || 'Active User'}
+                  </h3>
+                  <p className="text-xs font-mono text-slate-500 dark:text-slate-400 truncate">
+                    {currentUser?.email}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSidebarProfileOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-800 flex items-center justify-between text-xs">
+              <span className="text-slate-500">Workspace Role</span>
+              <span className="font-bold text-blue-600 dark:text-blue-400">
+                {currentUser?.roleName || 'Member'}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setIsSidebarProfileOpen(false)}
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsSidebarProfileOpen(false);
+                  await logoutUser();
+                  queryClient.clear();
+                  router.push('/login');
+                }}
+                className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold cursor-pointer"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Log out</span>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Global Slide-Over Quick Chat Drawer */}
