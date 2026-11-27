@@ -179,8 +179,53 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
       const channels = await db.query.chatChannels.findMany({
         where: or(...conditions),
         with: {
-          team: { columns: { id: true, name: true, keyPrefix: true } },
-          project: { columns: { id: true, key: true, name: true } },
+          team: {
+            columns: { id: true, name: true, keyPrefix: true },
+            with: {
+              lead: { columns: { id: true, fullName: true, email: true } },
+              members: {
+                with: {
+                  user: { columns: { id: true, fullName: true, email: true } },
+                },
+              },
+            },
+          },
+          project: {
+            columns: { id: true, key: true, name: true },
+            with: {
+              projectManager: { columns: { id: true, fullName: true, email: true } },
+              reviewer: { columns: { id: true, fullName: true, email: true } },
+              members: {
+                with: {
+                  user: { columns: { id: true, fullName: true, email: true } },
+                },
+              },
+              primaryTeam: {
+                with: {
+                  lead: { columns: { id: true, fullName: true, email: true } },
+                  members: {
+                    with: {
+                      user: { columns: { id: true, fullName: true, email: true } },
+                    },
+                  },
+                },
+              },
+              assignedTeams: {
+                with: {
+                  team: {
+                    with: {
+                      lead: { columns: { id: true, fullName: true, email: true } },
+                      members: {
+                        with: {
+                          user: { columns: { id: true, fullName: true, email: true } },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
           members: {
             with: {
               user: { columns: { id: true, fullName: true, email: true } },
@@ -226,6 +271,42 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
               ? ch.members.find((m) => m.userId !== user.id)?.user || ch.members[0]?.user || null
               : null;
 
+          // Compute respective channel members for mentions
+          const channelMembersMap = new Map<string, { id: string; fullName: string; email: string }>();
+
+          if (ch.channelType === 'DIRECT') {
+            for (const m of ch.members) {
+              if (m.user) channelMembersMap.set(m.user.id, m.user);
+            }
+          } else if (ch.channelType === 'TEAM' && ch.team) {
+            if (ch.team.lead) channelMembersMap.set(ch.team.lead.id, ch.team.lead);
+            for (const tm of ch.team.members || []) {
+              if (tm.user) channelMembersMap.set(tm.user.id, tm.user);
+            }
+          } else if (ch.channelType === 'PROJECT' && ch.project) {
+            if (ch.project.projectManager) channelMembersMap.set(ch.project.projectManager.id, ch.project.projectManager);
+            if (ch.project.reviewer) channelMembersMap.set(ch.project.reviewer.id, ch.project.reviewer);
+            for (const pm of ch.project.members || []) {
+              if (pm.user) channelMembersMap.set(pm.user.id, pm.user);
+            }
+            if (ch.project.primaryTeam) {
+              if (ch.project.primaryTeam.lead) channelMembersMap.set(ch.project.primaryTeam.lead.id, ch.project.primaryTeam.lead);
+              for (const tm of ch.project.primaryTeam.members || []) {
+                if (tm.user) channelMembersMap.set(tm.user.id, tm.user);
+              }
+            }
+            for (const at of ch.project.assignedTeams || []) {
+              if (at.team) {
+                if (at.team.lead) channelMembersMap.set(at.team.lead.id, at.team.lead);
+                for (const tm of at.team.members || []) {
+                  if (tm.user) channelMembersMap.set(tm.user.id, tm.user);
+                }
+              }
+            }
+          }
+
+          const channelMembers = Array.from(channelMembersMap.values());
+
           return {
             id: ch.id,
             channelType: ch.channelType as 'DIRECT' | 'TEAM' | 'PROJECT',
@@ -233,10 +314,11 @@ export const chatRoutes: FastifyPluginAsync = async (fastify) => {
               ch.channelType === 'DIRECT'
                 ? peerUser?.fullName || 'Direct Message'
                 : ch.project?.name || ch.team?.name || ch.name || 'Channel',
-            team: ch.team || null,
-            project: ch.project || null,
+            team: ch.team ? { id: ch.team.id, name: ch.team.name, keyPrefix: ch.team.keyPrefix } : null,
+            project: ch.project ? { id: ch.project.id, key: ch.project.key, name: ch.project.name } : null,
             peerUser,
             unreadCount,
+            channelMembers,
             lastMessage: latest
               ? {
                   id: latest.id,

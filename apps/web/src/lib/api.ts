@@ -2071,6 +2071,7 @@ export interface ChatChannel {
   team?: { id: string; name: string; keyPrefix: string } | null;
   project?: { id: string; key: string; name: string } | null;
   peerUser?: { id: string; fullName: string; email: string } | null;
+  channelMembers?: Array<{ id: string; fullName: string; email: string }>;
   unreadCount: number;
   lastMessage?: {
     id: string;

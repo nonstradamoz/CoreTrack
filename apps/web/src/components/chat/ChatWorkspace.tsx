@@ -269,22 +269,29 @@ export function ChatWorkspace({ compact = false }: { compact?: boolean }) {
   const teamChannels = filteredChannels.filter((c) => c.channelType === 'TEAM');
   const dmChannels = filteredChannels.filter((c) => c.channelType === 'DIRECT');
 
-  // Mention autocomplete matching
+  // Mention autocomplete matching:
+  // - Direct messages: disabled (no mentions allowed)
+  // - Team / Project channels: ONLY show respective members of this channel
   const mentionMatches = useMemo(() => {
-    if (mentionQuery === null) return [];
+    if (mentionQuery === null || !activeChannel || activeChannel.channelType === 'DIRECT') return [];
     const q = mentionQuery.toLowerCase();
-    return availableUsers
+    const channelUsers = activeChannel.channelMembers || [];
+    return channelUsers
       .filter((u) => u.fullName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q))
       .slice(0, 5);
-  }, [mentionQuery, availableUsers]);
+  }, [mentionQuery, activeChannel]);
 
   function handleComposerChange(val: string) {
     setMessageInput(val);
+    if (!activeChannel || activeChannel.channelType === 'DIRECT') {
+      setMentionQuery(null);
+      return;
+    }
     const match = val.match(/@([a-zA-Z0-9._-]*)$/);
     setMentionQuery(match ? match[1] : null);
   }
 
-  function insertMention(user: UserPersona) {
+  function insertMention(user: { id: string; fullName: string; email: string }) {
     const firstName = user.fullName.split(' ')[0];
     setMessageInput((prev) => prev.replace(/@([a-zA-Z0-9._-]*)$/, `@${firstName} `));
     setMentionQuery(null);
@@ -580,7 +587,11 @@ export function ChatWorkspace({ compact = false }: { compact?: boolean }) {
                     No messages in {activeChannel.name} yet
                   </p>
                   <p className="text-[11px] text-slate-400">
-                    Mention teammates with <code className="font-mono">@name</code> or link tasks with <code className="font-mono">#CORE-1</code>.
+                    {activeChannel.channelType === 'DIRECT' ? (
+                      <>Direct 1-on-1 messaging with <span className="font-semibold text-slate-600 dark:text-slate-300">{activeChannel.name}</span>. Link tasks with <code className="font-mono">#CORE-1</code>.</>
+                    ) : (
+                      <>Mention members with <code className="font-mono">@name</code> or link tasks with <code className="font-mono">#CORE-1</code>.</>
+                    )}
                   </p>
                 </div>
               ) : (
@@ -844,7 +855,11 @@ export function ChatWorkspace({ compact = false }: { compact?: boolean }) {
                 </button>
                 <input
                   type="text"
-                  placeholder={`Message ${activeChannel.name}… (@mention, #CORE-1)`}
+                  placeholder={
+                    activeChannel.channelType === 'DIRECT'
+                      ? `Message ${activeChannel.name}… (#CORE-1)`
+                      : `Message ${activeChannel.name}… (@mention, #CORE-1)`
+                  }
                   value={messageInput}
                   onChange={(e) => handleComposerChange(e.target.value)}
                   className="flex-1 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600"
