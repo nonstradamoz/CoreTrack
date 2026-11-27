@@ -9,11 +9,11 @@ import {
 } from '../../lib/api';
 import { usePermissions } from '../../hooks/usePermissions';
 import { Permissions } from '../../lib/permissions';
-import { ServiceCatalogGrid, CatalogItem, CATALOG_ITEMS } from '../../components/portal/ServiceCatalogGrid';
+import { ServiceCatalogGrid, CatalogItem } from '../../components/portal/ServiceCatalogGrid';
 import { ServiceRequestModal } from '../../components/portal/ServiceRequestModal';
 import { PortalRequestDetailModal } from '../../components/portal/PortalRequestDetailModal';
 import { MyRequestsList } from '../../components/portal/MyRequestsList';
-import { Search, Sparkles, Inbox, Plus, Headset } from 'lucide-react';
+import { Search, Sparkles, Inbox, Headset } from 'lucide-react';
 
 export default function EmployeePortalPage() {
   const queryClient = useQueryClient();
@@ -67,14 +67,6 @@ export default function EmployeePortalPage() {
               Submit IT service requests, report incidents, and track support responses.
             </p>
           </div>
-
-          <button
-            onClick={() => setSelectedCatalogItem(CATALOG_ITEMS[0])}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-2xs transition cursor-pointer shrink-0 self-start sm:self-auto"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            <span>New Request</span>
-          </button>
         </div>
 
         {/* Search & Tabs */}
