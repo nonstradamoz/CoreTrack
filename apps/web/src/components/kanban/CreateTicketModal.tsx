@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Plus, AlertCircle, User, Calendar, Sparkles, Users } from 'lucide-react';
 import { Ticket, UserPersona, Team, fetchAvailableUsers, fetchTeams, fetchProjects, fetchCurrentUser } from '../../lib/api';
+import { RichTextEditor } from '../ui/RichText';
 import { usePermissions } from '../../hooks/usePermissions';
 import { Permissions } from '../../lib/permissions';
 
@@ -337,12 +338,11 @@ export function CreateTicketModal({
 
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Description</label>
-            <textarea
-              rows={4}
-              placeholder="Provide context, acceptance criteria, or reproduction steps..."
+            <RichTextEditor
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition"
+              onChange={setDescription}
+              placeholder="Provide context, acceptance criteria, or reproduction steps..."
+              minHeight="110px"
             />
           </div>
 

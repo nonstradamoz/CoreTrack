@@ -12,6 +12,7 @@ import {
   UserPersona,
 } from '../../lib/api';
 import { SLABadge } from '../sla/SLABadge';
+import { RichTextEditor, RichTextContent } from '../ui/RichText';
 import { HELPDESK_STATUS_BADGE } from './MyRequestsList';
 import { usePermissions } from '../../hooks/usePermissions';
 import { X, MessageSquare, Send, Calendar, Lock, Globe, AlertCircle } from 'lucide-react';
@@ -130,8 +131,11 @@ export function PortalRequestDetailModal({
               )}
             </div>
 
-            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30 text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed">
-              {ticket.description || 'No additional details provided.'}
+            <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30 text-xs text-slate-800 dark:text-slate-200">
+              <RichTextContent
+                content={ticket.description}
+                emptyFallback="No additional details provided."
+              />
             </div>
           </div>
 
@@ -275,9 +279,9 @@ export function PortalRequestDetailModal({
                         {new Date(c.createdAt).toLocaleString()}
                       </span>
                     </div>
-                    <p className="text-slate-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
-                      {c.body}
-                    </p>
+                    <div className="text-slate-700 dark:text-slate-300">
+                      <RichTextContent content={c.body} />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -323,22 +327,23 @@ export function PortalRequestDetailModal({
             </div>
           )}
 
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              placeholder={isInternal ? 'Write an internal note (hidden from requester)...' : 'Write a reply...'}
+          <div className="space-y-2">
+            <RichTextEditor
               value={replyText}
-              onChange={(e) => setReplyText(e.target.value)}
-              className="flex-1 px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-blue-600"
+              onChange={setReplyText}
+              placeholder={isInternal ? 'Write an internal note (hidden from requester)...' : 'Write a reply...'}
+              minHeight="70px"
             />
-            <button
-              type="submit"
-              disabled={replyMutation.isPending || !replyText.trim()}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold disabled:opacity-40 cursor-pointer"
-            >
-              <Send className="h-3.5 w-3.5" />
-              <span>Send</span>
-            </button>
+            <div className="flex justify-end">
+              <button
+                type="submit"
+                disabled={replyMutation.isPending || !replyText.trim()}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold disabled:opacity-40 cursor-pointer"
+              >
+                <Send className="h-3.5 w-3.5" />
+                <span>Send</span>
+              </button>
+            </div>
           </div>
         </form>
       </div>

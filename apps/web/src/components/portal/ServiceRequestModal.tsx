@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { X, Send, AlertCircle, ShieldCheck } from 'lucide-react';
 import { CatalogItem } from './ServiceCatalogGrid';
 import { HelpdeskTicket } from '../../lib/api';
+import { RichTextEditor } from '../ui/RichText';
 
 interface ServiceRequestModalProps {
   item: CatalogItem | null;
@@ -159,12 +160,11 @@ export function ServiceRequestModal({
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
               Details & Business Justification
             </label>
-            <textarea
-              rows={4}
-              placeholder="Provide serial numbers, model preferences, links, or error messages..."
+            <RichTextEditor
               value={details}
-              onChange={(e) => setDetails(e.target.value)}
-              className="w-full px-3.5 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition"
+              onChange={setDetails}
+              placeholder="Provide serial numbers, model preferences, links, or error messages..."
+              minHeight="110px"
             />
           </div>
 

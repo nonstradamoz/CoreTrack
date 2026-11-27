@@ -27,6 +27,7 @@ import {
 } from '../../../lib/api';
 import { CreateTicketModal } from '../../../components/kanban/CreateTicketModal';
 import { ProjectSummaryCard } from '../../../components/projects/ProjectSummaryCard';
+import { RichTextEditor, RichTextContent } from '../../../components/ui/RichText';
 import { usePermissions } from '../../../hooks/usePermissions';
 import { Permissions } from '../../../lib/permissions';
 import {
@@ -281,9 +282,12 @@ export default function ProjectDetailPage() {
               <h1 className="text-xl md:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight">
                 {project.name}
               </h1>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
-                {project.description || 'Enterprise project under active engineering and organizational coordination.'}
-              </p>
+              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-2xl leading-relaxed">
+                <RichTextContent
+                  content={project.description}
+                  emptyFallback="Enterprise project under active engineering and organizational coordination."
+                />
+              </div>
             </div>
 
             {/* Quick Milestone & Task Completion Stats */}
@@ -710,9 +714,9 @@ export default function ProjectDetailPage() {
                           {m.title}
                         </div>
                         {m.description && (
-                          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                            {m.description}
-                          </p>
+                          <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            <RichTextContent content={m.description} />
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1394,11 +1398,11 @@ function EditProjectModal({
 
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Description</label>
-            <textarea
-              rows={3}
+            <RichTextEditor
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
+              onChange={setDescription}
+              placeholder="Project goals, scope, and deliverables..."
+              minHeight="95px"
             />
           </div>
 
@@ -1558,12 +1562,11 @@ function AddMilestoneModal({
 
           <div>
             <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Description</label>
-            <textarea
-              rows={2}
+            <RichTextEditor
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={setDescription}
               placeholder="Key deliverable details..."
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
+              minHeight="85px"
             />
           </div>
 

@@ -27,6 +27,7 @@ import {
   TicketVcsLink,
 } from '../../lib/api';
 import { SLABadge } from '../sla/SLABadge';
+import { RichTextEditor, RichTextContent } from '../ui/RichText';
 import { usePermissions } from '../../hooks/usePermissions';
 import { Permissions } from '../../lib/permissions';
 import {
@@ -75,6 +76,8 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
   const [conflictError, setConflictError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isEditingDesc, setIsEditingDesc] = useState(false);
+  const [descDraft, setDescDraft] = useState(ticket?.description || '');
 
   // Assignment & Task Editing Guard:
   // Regular employees (Tier 1) can only edit, change status, priority, or deadline on tasks assigned to themselves.
@@ -647,9 +650,64 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
               <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 mb-3 leading-snug">
                 {ticket.title}
               </h2>
-              <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30 text-xs md:text-sm text-slate-800 dark:text-slate-200 leading-relaxed whitespace-pre-wrap">
-                {ticket.description || (
-                  <span className="text-slate-400 italic">No description provided.</span>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                    Description
+                  </span>
+                  {canEditTask && !isEditingDesc && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDescDraft(ticket.description || '');
+                        setIsEditingDesc(true);
+                      }}
+                      className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
+                    >
+                      Edit
+                    </button>
+                  )}
+                </div>
+
+                {isEditingDesc ? (
+                  <div className="space-y-2">
+                    <RichTextEditor
+                      value={descDraft}
+                      onChange={setDescDraft}
+                      placeholder="Write a formatted task description..."
+                      minHeight="110px"
+                    />
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setIsEditingDesc(false)}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await updateTicket(ticket.ticketKey, {
+                            description: descDraft,
+                            lockVersion: ticket.lockVersion,
+                          });
+                          setIsEditingDesc(false);
+                          queryClient.invalidateQueries({ queryKey: ['tickets'] });
+                        }}
+                        className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold cursor-pointer"
+                      >
+                        Save Description
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/30 text-xs md:text-sm text-slate-800 dark:text-slate-200">
+                    <RichTextContent
+                      content={ticket.description}
+                      emptyFallback="No description provided."
+                    />
+                  </div>
                 )}
               </div>
             </div>
@@ -1097,9 +1155,9 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
                           )}
                         </div>
 
-                        <p className="text-xs whitespace-pre-wrap leading-relaxed pl-7">
-                          {comment.body}
-                        </p>
+                        <div className="text-xs pl-7">
+                          <RichTextContent content={comment.body} />
+                        </div>
                       </div>
                     );
                   })
@@ -1137,29 +1195,26 @@ export function TicketDetailModal({ ticket, onClose }: TicketDetailModalProps) {
                   </button>
                 </div>
 
-                <div className="relative">
-                  <textarea
-                    rows={3}
+                <div className="space-y-2">
+                  <RichTextEditor
+                    value={newComment}
+                    onChange={setNewComment}
                     placeholder={
                       commentScope === 'INTERNAL_ONLY'
                         ? 'Write a private note visible to internal staff only...'
                         : 'Post a public reply visible to all collaborators...'
                     }
-                    value={newComment}
-                    onChange={(e) => setNewComment(e.target.value)}
-                    className={`w-full p-3 pr-24 rounded-xl border text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none transition ${
-                      commentScope === 'INTERNAL_ONLY'
-                        ? 'border-amber-300 dark:border-amber-800 bg-amber-50/40 dark:bg-amber-950/20 focus:border-amber-500'
-                        : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 focus:border-blue-600'
-                    }`}
+                    minHeight="80px"
                   />
-                  <button
-                    type="submit"
-                    disabled={!newComment.trim() || commentMutation.isPending}
-                    className="absolute right-2.5 bottom-3.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs disabled:opacity-40 transition"
-                  >
-                    <Send className="h-3 w-3" /> Post
-                  </button>
+                  <div className="flex justify-end">
+                    <button
+                      type="submit"
+                      disabled={!newComment.trim() || commentMutation.isPending}
+                      className="px-3.5 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-2xs disabled:opacity-40 transition cursor-pointer"
+                    >
+                      <Send className="h-3 w-3" /> Post
+                    </button>
+                  </div>
                 </div>
               </form>
             </div>
