@@ -15,6 +15,7 @@ import { useProject } from '../../context/ProjectContext';
 import { SLABadge } from '../../components/sla/SLABadge';
 import { TicketDetailModal } from '../../components/kanban/TicketDetailModal';
 import { CreateTicketModal } from '../../components/kanban/CreateTicketModal';
+import { ImportTasksXlsxModal } from '../../components/kanban/ImportTasksXlsxModal';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useModuleAccess } from '../../hooks/useModuleAccess';
 import { AccessDenied } from '../../components/auth/AccessDenied';
@@ -28,17 +29,20 @@ import {
   Search,
   Filter,
   X,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 export default function BacklogPage() {
   const queryClient = useQueryClient();
   const { activeProject } = useProject();
-  const { hasPermission } = usePermissions();
+  const { hasPermission, isOrgAdmin, roleTier } = usePermissions();
   const { canAccess } = useModuleAccess();
   const canManageSprints = hasPermission(Permissions.SPRINT_MANAGE);
   const canCreateTask = hasPermission(Permissions.TICKET_CREATE);
+  const canImport = isOrgAdmin || roleTier >= 3;
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [isCreateTicketModalOpen, setIsCreateTicketModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isCreateSprintModalOpen, setIsCreateSprintModalOpen] = useState(false);
 
   // Functional Filters
@@ -163,6 +167,15 @@ export default function BacklogPage() {
               <Calendar className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
               <span>New Sprint</span>
             </button>
+            {canImport && (
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600 text-xs font-semibold text-slate-700 dark:text-slate-300 shadow-2xs transition cursor-pointer"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Import XLSX</span>
+              </button>
+            )}
             <button
               onClick={() => canCreateTask && setIsCreateTicketModalOpen(true)}
               disabled={!canCreateTask}
@@ -530,6 +543,14 @@ export default function BacklogPage() {
             setIsCreateTicketModalOpen(false);
             queryClient.invalidateQueries({ queryKey: ['tickets', activeProject.key] });
           }}
+        />
+      )}
+
+      {/* Import XLSX Modal */}
+      {canImport && (
+        <ImportTasksXlsxModal
+          isOpen={isImportModalOpen}
+          onClose={() => setIsImportModalOpen(false)}
         />
       )}
     </div>

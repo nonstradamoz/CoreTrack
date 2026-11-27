@@ -370,6 +370,15 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         .set({ nextTicketNumber: nextNum + 1 })
         .where(eq(projects.id, input.projectId));
 
+      // Auto-advance project from NOT_STARTED → IN_PROGRESS when a task is assigned
+      if (input.assigneeId && projectRecord && projectRecord.status === 'NOT_STARTED') {
+        await db
+          .update(projects)
+          .set({ status: 'IN_PROGRESS', updatedAt: new Date() })
+          .where(and(eq(projects.id, input.projectId), eq(projects.status, 'NOT_STARTED')));
+        console.info(`[Project] Auto-advanced project '${projectKey}' to IN_PROGRESS on task assignment`);
+      }
+
       // Broadcast to all connected clients on this project
       broadcastToProject(projectKey, {
         type: 'TICKET_CREATED',
@@ -650,6 +659,23 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
             }).catch((e) => console.warn('[Email] Task re-assigned notification error:', e));
           }
         }).catch(() => {});
+
+        // Auto-advance project from NOT_STARTED → IN_PROGRESS on first task assignment
+        db.query.projects
+          .findFirst({ where: eq(projects.id, existing.projectId) })
+          .then((proj) => {
+            if (proj && proj.status === 'NOT_STARTED') {
+              db.update(projects)
+                .set({ status: 'IN_PROGRESS', updatedAt: new Date() })
+                .where(and(eq(projects.id, existing.projectId), eq(projects.status, 'NOT_STARTED')))
+                .execute()
+                .then(() =>
+                  console.info(`[Project] Auto-advanced project '${projectKey}' to IN_PROGRESS on task re-assignment`)
+                )
+                .catch(() => {});
+            }
+          })
+          .catch(() => {});
       }
 
       // Asynchronous Automation Trigger check: STATUS_CHANGED / PRIORITY_CHANGED / ASSIGNEE_CHANGED
@@ -856,6 +882,20 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
           type: 'TICKET_UPDATED',
           payload: t,
         });
+      }
+
+      // Auto-advance affected projects from NOT_STARTED → IN_PROGRESS when assignee is set via bulk update
+      if (assigneeId) {
+        const affectedProjectIds = [...new Set(updatedTickets.map((t) => t.projectId))];
+        await Promise.all(
+          affectedProjectIds.map((pid) =>
+            db
+              .update(projects)
+              .set({ status: 'IN_PROGRESS', updatedAt: new Date() })
+              .where(and(eq(projects.id, pid), eq(projects.status, 'NOT_STARTED')))
+              .execute()
+          )
+        ).catch(() => {});
       }
 
       return reply.send({

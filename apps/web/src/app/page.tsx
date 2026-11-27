@@ -6,8 +6,10 @@ import { fetchTickets, createTicket, Ticket } from '../lib/api';
 import { KanbanBoard } from '../components/kanban/KanbanBoard';
 import { CreateTicketModal } from '../components/kanban/CreateTicketModal';
 import { TicketDetailModal } from '../components/kanban/TicketDetailModal';
+import { ImportTasksXlsxModal } from '../components/kanban/ImportTasksXlsxModal';
 import { useProject } from '../context/ProjectContext';
-import { Plus, Search, Filter, FolderGit2 } from 'lucide-react';
+import { usePermissions } from '../hooks/usePermissions';
+import { Plus, Search, Filter, FolderGit2, FileSpreadsheet } from 'lucide-react';
 import Link from 'next/link';
 
 export default function Home() {
@@ -15,6 +17,9 @@ export default function Home() {
   const { activeProject, projects, isLoadingProjects } = useProject();
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const { roleTier } = usePermissions();
+  const canImport = roleTier >= 3;
 
   // Functional Filters
   const [searchQuery, setSearchQuery] = useState('');
@@ -82,6 +87,15 @@ export default function Home() {
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
+            {canImport && (
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600 text-slate-700 dark:text-slate-300 text-xs font-semibold shadow-2xs transition active:scale-[0.98] cursor-pointer"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Import XLSX</span>
+              </button>
+            )}
             <button
               onClick={() => setIsCreateModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-2xs transition active:scale-[0.98] cursor-pointer"
@@ -152,6 +166,14 @@ export default function Home() {
           onSubmit={async (data) => {
             await createTicketMutation.mutateAsync(data);
           }}
+        />
+      )}
+
+      {/* Import XLSX Modal */}
+      {canImport && (
+        <ImportTasksXlsxModal
+          isOpen={isImportModalOpen}
+          onClose={() => setIsImportModalOpen(false)}
         />
       )}
 

@@ -1,9 +1,10 @@
 import { FastifyPluginAsync } from 'fastify';
 import { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { db, tickets, projects, users, eq, desc } from '@coretrack/db';
+import { db, tickets, projects, users, eq, and, desc } from '@coretrack/db';
 import { calculateSLADueDates } from '@coretrack/shared';
 import { broadcastToProject } from '../ws.js';
+import { getCurrentUser, getUserRoleTier } from '../auth/auth.js';
 
 function mapTicketType(val?: string): 'TASK' | 'BUG' | 'STORY' | 'INCIDENT' | 'SERVICE_REQUEST' {
   const norm = (val || '').toUpperCase().trim();
@@ -72,6 +73,17 @@ export const importExportRoutes: FastifyPluginAsync = async (fastify) => {
       const { projectKey } = request.params;
       const { tasks: importList } = request.body;
 
+      const caller = await getCurrentUser(request);
+      if (!caller) {
+        return reply.status(401).send({ error: 'Unauthorized' });
+      }
+      const callerTierInfo = await getUserRoleTier(caller.id, projectKey);
+      if (callerTierInfo.tier < 3) {
+        return reply.status(403).send({
+          error: 'Only Managers, Admins, and Super Admins can bulk import tasks.',
+        });
+      }
+
       const proj = await db.query.projects.findFirst({
         where: eq(projects.key, projectKey),
       });
@@ -80,10 +92,10 @@ export const importExportRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'Project not found' });
       }
 
-      const defaultUser = await db.query.users.findFirst();
-      const reporterId = defaultUser?.id || '00000000-0000-0000-0000-000000000001';
+      const reporterId = caller.id;
 
       const importedKeys: string[] = [];
+      let anyTaskAssigned = false;
       let currentNum = proj.nextTicketNumber;
 
       for (const item of importList) {
@@ -110,6 +122,8 @@ export const importExportRoutes: FastifyPluginAsync = async (fastify) => {
           dueDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
         }
 
+        if (assigneeId) anyTaskAssigned = true;
+
         const [created] = await db
           .insert(tickets)
           .values({
@@ -123,6 +137,8 @@ export const importExportRoutes: FastifyPluginAsync = async (fastify) => {
             status: finalStatus,
             storyPoints: item.storyPoints,
             assigneeId,
+            assignedByUserId: assigneeId ? caller.id : null,
+            assignedByRoleTier: assigneeId ? callerTierInfo.tier : 1,
             dueDate,
             slaResponseDueAt: responseDueAt,
             slaResolutionDueAt: resolutionDueAt,
@@ -140,10 +156,15 @@ export const importExportRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      // Update project sequence number
+      // Update project sequence number (and auto-advance NOT_STARTED -> IN_PROGRESS if any task was assigned)
       await db
         .update(projects)
-        .set({ nextTicketNumber: currentNum })
+        .set({
+          nextTicketNumber: currentNum,
+          ...(anyTaskAssigned && proj.status === 'NOT_STARTED'
+            ? { status: 'IN_PROGRESS', updatedAt: new Date() }
+            : {}),
+        })
         .where(eq(projects.id, proj.id));
 
       return reply.status(201).send({

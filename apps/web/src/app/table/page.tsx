@@ -16,6 +16,7 @@ import { AccessDenied } from '../../components/auth/AccessDenied';
 import { SLABadge } from '../../components/sla/SLABadge';
 import { TicketDetailModal } from '../../components/kanban/TicketDetailModal';
 import { CreateTicketModal } from '../../components/kanban/CreateTicketModal';
+import { ImportTasksXlsxModal } from '../../components/kanban/ImportTasksXlsxModal';
 import { usePermissions } from '../../hooks/usePermissions';
 import {
   Table2,
@@ -32,6 +33,7 @@ import {
   Calendar,
   Sparkles,
   ChevronDown,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 function TablePageInner() {
@@ -43,6 +45,8 @@ function TablePageInner() {
   const { user, roleTier } = usePermissions();
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const canImport = roleTier >= 3;
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<string>('ALL');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
@@ -163,6 +167,15 @@ function TablePageInner() {
               <Download className="h-3.5 w-3.5 text-slate-500 dark:text-slate-400" />
               <span>Export</span>
             </button>
+            {canImport && (
+              <button
+                onClick={() => setIsImportModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:border-slate-300 dark:hover:border-slate-600 text-xs font-semibold text-slate-700 dark:text-slate-300 shadow-2xs transition cursor-pointer"
+              >
+                <FileSpreadsheet className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Import XLSX</span>
+              </button>
+            )}
             <button
               onClick={() => setIsCreateModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-2xs transition active:scale-[0.98] cursor-pointer"
@@ -500,6 +513,14 @@ function TablePageInner() {
             setIsCreateModalOpen(false);
             queryClient.invalidateQueries({ queryKey: ['tickets', activeProject.key] });
           }}
+        />
+      )}
+
+      {/* Import XLSX Modal */}
+      {canImport && (
+        <ImportTasksXlsxModal
+          isOpen={isImportModalOpen}
+          onClose={() => setIsImportModalOpen(false)}
         />
       )}
     </div>
