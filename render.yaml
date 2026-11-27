@@ -29,6 +29,8 @@ services:
         generateValue: true
       - key: CORS_ORIGIN
         value: '*'
+      - key: APP_URL
+        value: https://core-track-inky.vercel.app
 
   # 2. Next.js Frontend
   - type: web

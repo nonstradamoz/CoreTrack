@@ -22,6 +22,7 @@ import {
 import { getCurrentUser, getUserRoleTier } from '../auth/auth.js';
 import { Permissions } from '@coretrack/shared';
 import {
+  getAppUrl,
   getProviderStatus,
   getMailProviders,
   getPreferredPrimaryProvider,
@@ -366,7 +367,7 @@ export const mailRoutes: FastifyPluginAsync = async (fastify) => {
             content,
             sender: senderInfo,
             ctaText: ctaText || (resolvedProjectName ? 'Open Project' : 'Open CoreTrack'),
-            ctaUrl: ctaUrl || (projectId ? `${process.env.APP_URL || 'http://localhost:3000'}/projects/${projectId}` : undefined),
+            ctaUrl: ctaUrl || (projectId ? `${getAppUrl()}/projects/${projectId}` : undefined),
             notificationType: category,
             projectId,
             ticketId,

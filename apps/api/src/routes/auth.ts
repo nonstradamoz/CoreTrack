@@ -25,7 +25,16 @@ import {
   getUserRoleTier,
 } from '../auth/auth.js';
 import { hashPassword, verifyPassword, validatePasswordPolicy } from '../auth/password.js';
-import { sendDirectOrBroadcastEmail } from '../services/email.js';
+import { sendDirectOrBroadcastEmail, getAppUrl } from '../services/email.js';
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function getRoleFromPermissions(perms: bigint): { roleName: string; roleTier: number } {
   if ((perms & Permissions.ORG_ADMIN) === Permissions.ORG_ADMIN) {
@@ -256,6 +265,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       if (sendInviteEmail) {
         try {
           const roleDisplay = getRoleFromPermissions(globalPermissions).roleName;
+          const loginUrl = `${getAppUrl()}/login`;
           await sendDirectOrBroadcastEmail({
             recipient: { email: newUser.email, fullName: newUser.fullName },
             subject: 'Welcome to CoreTrack Enterprise Workspace',
@@ -263,14 +273,14 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
             categoryColor: '#2563eb',
             headline: `Welcome to CoreTrack, ${newUser.fullName}!`,
             greeting: `Hello ${newUser.fullName},`,
-            content: `Your new CoreTrack account has been successfully provisioned with the <strong>${roleDisplay}</strong> role.<br/><br/>You now have access to collaborative project boards, sprint management, and enterprise workflows.`,
+            content: `Your new CoreTrack account has been successfully provisioned with the <strong>${roleDisplay}</strong> role.<br/><br/><strong>Login Credentials:</strong><br/>Email: <code>${escapeHtml(newUser.email)}</code><br/>Temporary Password: <code>${escapeHtml(password)}</code><br/><br/>You will be prompted to set a new personal password after your first sign-in.`,
             sender: {
               fullName: caller.fullName,
               email: caller.email,
               roleName: callerTierInfo.roleName,
             },
-            ctaText: 'Access Workspace',
-            ctaUrl: process.env.APP_URL || 'http://localhost:3000',
+            ctaText: 'Sign In to Workspace',
+            ctaUrl: loginUrl,
             notificationType: 'DIRECT_MAIL',
           });
         } catch (mailErr) {

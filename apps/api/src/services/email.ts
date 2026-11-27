@@ -1,6 +1,14 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import { db, emailNotificationLogs, eq } from '@coretrack/db';
 
+export function getAppUrl(): string {
+  const configured = process.env.APP_URL?.trim().replace(/\/$/, '');
+  if (configured) return configured;
+  return process.env.NODE_ENV === 'production'
+    ? 'https://core-track-inky.vercel.app'
+    : 'http://localhost:3000';
+}
+
 function getEnvConfig() {
   return {
     RESEND_API_KEY: process.env.RESEND_API_KEY || '',
@@ -16,11 +24,11 @@ function getEnvConfig() {
     SMTP_USER: process.env.SMTP_USER || '',
     SMTP_PASS: process.env.SMTP_PASS || '',
     SMTP_FROM: process.env.SMTP_FROM || 'CoreTrack Notifications <notifications@coretrack.internal>',
-    APP_URL: process.env.APP_URL || 'http://localhost:3000',
+    APP_URL: getAppUrl(),
   };
 }
 
-const APP_URL = process.env.APP_URL || 'http://localhost:3000';
+const APP_URL = getAppUrl();
 
 export interface EmailProviderConfig {
   name: 'RESEND' | 'MAILJET' | 'BREVO';

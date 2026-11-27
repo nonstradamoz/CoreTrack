@@ -440,7 +440,7 @@ export default function UserManagementPage() {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                Directory Directory ({filteredUsers.length} of {totalUsers})
+                User Directory ({filteredUsers.length} of {totalUsers})
               </h3>
               <p className="text-xs text-slate-400">
                 Search, inspect roles, and manage access statuses across all accounts.
