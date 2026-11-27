@@ -55,12 +55,13 @@ export function DailyStatusDrawer({ isOpen, onClose }: DailyStatusDrawerProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  // Query today's status
-  const { data: todayData, isLoading: isLoadingToday, refetch: refetchToday } = useQuery({
+  // Query today's status (real-time polling while drawer is open)
+  const { data: todayData, isLoading: isLoadingToday, refetch: refetchToday, isFetching: isFetchingToday } = useQuery({
     queryKey: ['todayStandup', activeProject?.key],
     queryFn: () => (activeProject ? fetchTodayStandup(activeProject.key) : Promise.resolve(null)),
     enabled: isOpen && !!activeProject,
     staleTime: 0,
+    refetchInterval: isOpen ? 5000 : false,
   });
 
   // Always refresh today's compiled tasks when opening the drawer
@@ -107,6 +108,8 @@ export function DailyStatusDrawer({ isOpen, onClose }: DailyStatusDrawerProps) {
   if (!isOpen) return null;
 
   const completedList: StandupTaskItem[] = todayData?.autoCompiled.completed || [];
+  const inProgressList: StandupTaskItem[] = todayData?.autoCompiled.inProgress || [];
+  const blockedList: StandupTaskItem[] = todayData?.autoCompiled.blocked || [];
 
   // Generate dynamic formatted summary text for 1-click copy
   const todayFormattedDate = new Date().toLocaleDateString(undefined, {
@@ -124,6 +127,17 @@ ${completedList.length > 0
         .map((t) => `• [${t.key}] ${t.title}${t.storyPoints ? ` (${t.storyPoints} pts)` : ''}`)
         .join('\n')
       : '• None yet'
+    }
+
+*In Progress:*
+${inProgressList.length > 0
+      ? inProgressList
+        .map((t) => `• [${t.key}] ${t.title}${t.storyPoints ? ` (${t.storyPoints} pts)` : ''}`)
+        .join('\n')
+      : '• None'
+    }${blockedList.length > 0
+      ? `\n\n*Blockers:*\n${blockedList.map((t) => `• [${t.key}] ${t.title}`).join('\n')}`
+      : ''
     }${customNotes.trim()
       ? `\n\n📝 *Notes:*\n${customNotes.trim()}`
       : ''
@@ -144,15 +158,15 @@ ${completedList.length > 0
       projectId: activeProject.id,
       standupDate: todayData.date,
       completedTaskIds: completedList,
-      inProgressTaskIds: [],
-      blockers: '',
+      inProgressTaskIds: inProgressList,
+      blockers: blockedList.map((t) => `[${t.key}] ${t.title}`).join('\n'),
       customNotes,
       summaryMarkdown: markdownSummary,
     });
   }
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden">
+    <div className="fixed inset-0 z-[70] overflow-hidden">
       {/* Backdrop */}
       <div
         onClick={onClose}
@@ -251,9 +265,16 @@ ${completedList.length > 0
                       )}
                     </div>
 
-                    <span className="text-[11px] text-slate-400">
-                      Auto-compiled
-                    </span>
+                    <button
+                      type="button"
+                      onClick={() => refetchToday()}
+                      disabled={isFetchingToday}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-600 dark:text-blue-400 hover:underline cursor-pointer disabled:opacity-50"
+                      title="Refresh live tasks"
+                    >
+                      <RefreshCw className={`h-3 w-3 ${isFetchingToday ? 'animate-spin' : ''}`} />
+                      <span>Live</span>
+                    </button>
                   </div>
 
                   {/* 1. SECTION: SUMMARY */}
@@ -357,6 +378,66 @@ ${completedList.length > 0
                         </div>
                       )}
                     </div>
+
+                    {/* In Progress List */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-xs font-semibold text-slate-800 dark:text-slate-200">
+                        <span className="flex items-center gap-1.5 text-blue-700 dark:text-blue-400">
+                          <Clock className="h-3.5 w-3.5" />
+                          In Progress ({inProgressList.length})
+                        </span>
+                      </div>
+                      {inProgressList.length === 0 ? (
+                        <p className="text-xs text-slate-400 italic p-2.5 rounded-lg border border-dashed border-slate-200 dark:border-slate-800">
+                          No tasks currently in progress.
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {inProgressList.map((t) => (
+                            <div
+                              key={t.key}
+                              className="p-2.5 rounded-lg border border-blue-200/80 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20 text-xs flex items-center justify-between"
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="font-mono font-bold text-blue-800 dark:text-blue-400">
+                                  {t.key}
+                                </span>
+                                <span className="truncate text-slate-800 dark:text-slate-200 font-medium">
+                                  {t.title}
+                                </span>
+                              </div>
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-blue-200 dark:border-blue-900">
+                                {(t.status || 'IN_PROGRESS').replace('_', ' ')}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Blocked List */}
+                    {blockedList.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between text-xs font-semibold text-rose-700 dark:text-rose-400">
+                          <span>Blocked ({blockedList.length})</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {blockedList.map((t) => (
+                            <div
+                              key={t.key}
+                              className="p-2.5 rounded-lg border border-rose-200/80 dark:border-rose-900/60 bg-rose-50/40 dark:bg-rose-950/20 text-xs flex items-center gap-2"
+                            >
+                              <span className="font-mono font-bold text-rose-800 dark:text-rose-400">
+                                {t.key}
+                              </span>
+                              <span className="truncate text-slate-800 dark:text-slate-200 font-medium">
+                                {t.title}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {/* Notes Input */}
                     <div className="space-y-3 pt-2">

@@ -32,11 +32,13 @@ export const standupRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ['Standups'],
         querystring: z.object({
           projectKey: z.string().optional().default('CORE'),
+          tzOffset: z.coerce.number().optional(),
         }),
       },
     },
     async (request, reply) => {
-      const { projectKey } = request.query;
+      const { projectKey, tzOffset } = request.query;
+      const normalizedKey = projectKey.toUpperCase();
 
       const currentUser = await getCurrentUser(request);
       if (!currentUser) {
@@ -44,59 +46,106 @@ export const standupRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const proj = await db.query.projects.findFirst({
-        where: eq(projects.key, projectKey),
+        where: eq(projects.key, normalizedKey),
       });
 
       if (!proj) {
         return reply.status(404).send({ error: 'Project not found' });
       }
 
-      const today = new Date();
-      const todayDateStr = today.toISOString().split('T')[0];
+      const now = new Date();
+      // Compute user's local today if tzOffset (minutes from UTC, e.g. -330 for IST) is provided
+      const offsetMs = typeof tzOffset === 'number' ? tzOffset * 60 * 1000 : 0;
+      const localNow = new Date(now.getTime() - offsetMs);
+      const todayDateStr = localNow.toISOString().split('T')[0];
 
-      // Start of today in server local time
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
+      const startOfDay = new Date(localNow);
+      startOfDay.setUTCHours(0, 0, 0, 0);
+      const startOfDayUtc = new Date(startOfDay.getTime() + offsetMs);
 
-      // A. Query tasks completed today for the current user (assigned to them, or unassigned & reported by them)
-      const completedTodayRaw = await db.query.tickets.findMany({
-        where: and(
-          eq(tickets.projectId, proj.id),
-          or(
-            eq(tickets.assigneeId, currentUser.id),
-            and(isNull(tickets.assigneeId), eq(tickets.reporterId, currentUser.id))
+      const userOwnershipFilter = or(
+        eq(tickets.assigneeId, currentUser.id),
+        and(isNull(tickets.assigneeId), eq(tickets.reporterId, currentUser.id))
+      );
+
+      // A. Query live tasks for the current user in parallel: Completed Today, In Progress, Blocked
+      const [completedTodayRaw, inProgressRaw, blockedRaw, savedStandup] = await Promise.all([
+        db.query.tickets.findMany({
+          where: and(
+            eq(tickets.projectId, proj.id),
+            isNull(tickets.deletedAt),
+            userOwnershipFilter,
+            inArray(tickets.status, ['DONE', 'RESOLVED']),
+            gte(tickets.updatedAt, startOfDayUtc)
           ),
-          inArray(tickets.status, ['DONE', 'RESOLVED']),
-          gte(tickets.updatedAt, startOfDay)
-        ),
-        orderBy: desc(tickets.updatedAt),
-      });
-
-      // Check if user already submitted a standup for today
-      const savedStandup = await db.query.dailyStandups.findFirst({
-        where: and(
-          eq(dailyStandups.userId, currentUser.id),
-          eq(dailyStandups.projectId, proj.id),
-          eq(dailyStandups.standupDate, todayDateStr)
-        ),
-      });
+          orderBy: desc(tickets.updatedAt),
+        }),
+        db.query.tickets.findMany({
+          where: and(
+            eq(tickets.projectId, proj.id),
+            isNull(tickets.deletedAt),
+            userOwnershipFilter,
+            inArray(tickets.status, ['IN_PROGRESS', 'IN_REVIEW'])
+          ),
+          orderBy: desc(tickets.updatedAt),
+        }),
+        db.query.tickets.findMany({
+          where: and(
+            eq(tickets.projectId, proj.id),
+            isNull(tickets.deletedAt),
+            userOwnershipFilter,
+            eq(tickets.status, 'BLOCKED')
+          ),
+          orderBy: desc(tickets.updatedAt),
+        }),
+        db.query.dailyStandups.findFirst({
+          where: and(
+            eq(dailyStandups.userId, currentUser.id),
+            eq(dailyStandups.projectId, proj.id),
+            eq(dailyStandups.standupDate, todayDateStr)
+          ),
+        }),
+      ]);
 
       // Generate clean markdown template
       const completedBullets =
         completedTodayRaw.length > 0
           ? completedTodayRaw
-            .map((t) => `• [${t.ticketKey}] ${t.title}${t.storyPoints ? ` (${t.storyPoints} pts)` : ''}`)
-            .join('\n')
+              .map((t) => `• [${t.ticketKey}] ${t.title}${t.storyPoints ? ` (${t.storyPoints} pts)` : ''}`)
+              .join('\n')
           : '• None yet';
 
-      const generatedSummaryMarkdown = `*Daily Status Update — ${today.toLocaleDateString(undefined, {
+      const inProgressBullets =
+        inProgressRaw.length > 0
+          ? inProgressRaw
+              .map((t) => `• [${t.ticketKey}] ${t.title}${t.storyPoints ? ` (${t.storyPoints} pts)` : ''}`)
+              .join('\n')
+          : '• None';
+
+      const blockedBullets =
+        blockedRaw.length > 0
+          ? blockedRaw.map((t) => `• [${t.ticketKey}] ${t.title}`).join('\n')
+          : '';
+
+      const generatedSummaryMarkdown = `*Daily Status Update — ${localNow.toLocaleDateString(undefined, {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
       })}*
 
 *Completed Today:*
-${completedBullets}`;
+${completedBullets}
+
+*In Progress:*
+${inProgressBullets}${blockedBullets ? `\n\n*Blockers:*\n${blockedBullets}` : ''}`;
+
+      const mapTask = (t: (typeof completedTodayRaw)[number]) => ({
+        key: t.ticketKey,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        storyPoints: t.storyPoints,
+      });
 
       return reply.send({
         data: {
@@ -113,15 +162,9 @@ ${completedBullets}`;
           date: todayDateStr,
           savedStandup: savedStandup || null,
           autoCompiled: {
-            completed: completedTodayRaw.map((t) => ({
-              key: t.ticketKey,
-              title: t.title,
-              status: t.status,
-              priority: t.priority,
-              storyPoints: t.storyPoints,
-            })),
-            inProgress: [],
-            blocked: [],
+            completed: completedTodayRaw.map(mapTask),
+            inProgress: inProgressRaw.map(mapTask),
+            blocked: blockedRaw.map(mapTask),
           },
           generatedSummaryMarkdown,
         },

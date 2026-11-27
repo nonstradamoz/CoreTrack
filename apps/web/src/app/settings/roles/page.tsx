@@ -46,7 +46,7 @@ const MODULE_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', route: '/dashboard', bit: Permissions.PROJECT_VIEW, icon: LayoutDashboard, description: 'KPI metrics, project carousels, activity feed' },
   { key: 'board', label: 'Kanban Board', route: '/', bit: Permissions.PROJECT_VIEW, icon: FolderGit2, description: 'Card drag-and-drop, sprint tasks, workflow columns' },
   { key: 'table', label: 'All Tasks Table', route: '/table', bit: Permissions.TICKET_BATCH_EDIT, icon: Table2, description: 'High-density spreadsheet, bulk edits' },
-  { key: 'timeline', label: 'Timeline & Schedule', route: '/timeline', bit: Permissions.SPRINT_MANAGE, icon: Calendar, description: 'Gantt chart, dependency tracking, conflict alerts' },
+  { key: 'timeline', label: 'Calendar & Schedule', route: '/timeline', bit: Permissions.PROJECT_VIEW, icon: Calendar, description: 'Schedule, dependency tracking, conflict alerts' },
   { key: 'backlog', label: 'Sprint Backlog', route: '/backlog', bit: Permissions.SPRINT_MANAGE, icon: Layers, description: 'Sprint creation, planning, backlog ordering' },
   { key: 'reports', label: 'Agile Reports', route: '/reports', bit: Permissions.PROJECT_VIEW, icon: BarChart3, description: 'Burndown, velocity, CFD, SLA compliance' },
   { key: 'automation', label: 'Automation Rules', route: '/automation', bit: Permissions.AUTOMATION_MANAGE, icon: Zap, description: 'Trigger-condition-action engine, CSV import' },

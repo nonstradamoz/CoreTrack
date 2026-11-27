@@ -1321,7 +1321,10 @@ export interface TeamStandupsResponse {
 }
 
 export async function fetchTodayStandup(projectKey: string = 'CORE'): Promise<TodayStandupResponse> {
-  const res = await fetch(`${API_URL}/api/v1/standups/today?projectKey=${encodeURIComponent(projectKey)}`);
+  const tzOffset = typeof window !== 'undefined' ? new Date().getTimezoneOffset() : 0;
+  const res = await fetch(
+    `${API_URL}/api/v1/standups/today?projectKey=${encodeURIComponent(projectKey)}&tzOffset=${tzOffset}`
+  );
   if (!res.ok) throw new Error('Failed to fetch today standup activity');
   const json = await res.json();
   return json.data;

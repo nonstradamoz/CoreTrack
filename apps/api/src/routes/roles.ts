@@ -68,8 +68,34 @@ export const roleRoutes: FastifyPluginAsync = async (fastify) => {
 
       const countMap = new Map(memberCounts.map((m) => [m.roleId, m.count]));
 
+      // Deduplicate roles by (normalized name + scope) so repeated seeds never show duplicate roles
+      const dedupedMap = new Map<
+        string,
+        (typeof allRoles)[number] & { memberCount: number }
+      >();
+
+      for (const r of allRoles) {
+        const key = `${r.name.trim().toLowerCase()}::${r.projectId ?? 'GLOBAL'}`;
+        const count = countMap.get(r.id) || 0;
+        const existing = dedupedMap.get(key);
+        if (!existing) {
+          dedupedMap.set(key, { ...r, memberCount: count });
+        } else {
+          // Prefer the role that has members or isSystem, and aggregate memberCount
+          const preferCurrent =
+            (r.isSystem && !existing.isSystem) ||
+            (count > 0 && existing.memberCount === 0);
+          dedupedMap.set(key, {
+            ...(preferCurrent ? r : existing),
+            memberCount: existing.memberCount + count,
+          });
+        }
+      }
+
+      const uniqueRoles = Array.from(dedupedMap.values());
+
       return reply.send({
-        data: allRoles.map((r) => ({
+        data: uniqueRoles.map((r) => ({
           id: r.id,
           name: r.name,
           description: r.description,
@@ -77,7 +103,7 @@ export const roleRoutes: FastifyPluginAsync = async (fastify) => {
           isSystem: r.isSystem,
           projectId: r.projectId,
           permissions: r.permissions.toString(),
-          memberCount: countMap.get(r.id) || 0,
+          memberCount: r.memberCount,
           createdAt: r.createdAt.toISOString(),
           updatedAt: r.updatedAt.toISOString(),
         })),
