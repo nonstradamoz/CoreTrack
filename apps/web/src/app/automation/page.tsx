@@ -117,7 +117,8 @@ export default function AutomationPage() {
   const { activeProject } = useProject();
   const { hasPermission } = usePermissions();
   const { canAccess, isLoading: isAccessLoading } = useModuleAccess();
-  const canManage = hasPermission(Permissions.AUTOMATION_MANAGE);
+  const canAutomationAccess = !isAccessLoading && canAccess('automation');
+  const canManage = canAutomationAccess && hasPermission(Permissions.AUTOMATION_MANAGE);
 
   // UI state
   const [activeTab, setActiveTab] = useState<AutomationTab>('rules');
@@ -146,28 +147,32 @@ export default function AutomationPage() {
   const { data: rules = [], isLoading: rulesLoading } = useQuery({
     queryKey: ['automationRules', activeProject?.key],
     queryFn: () => (activeProject ? fetchAutomationRules(activeProject.key) : Promise.resolve([])),
-    enabled: !!activeProject,
+    enabled: !!activeProject && canAutomationAccess,
   });
 
   const { data: availableUsers = [] } = useQuery({
     queryKey: ['availableUsers'],
     queryFn: fetchAvailableUsers,
+    enabled: canAutomationAccess,
   });
 
   const { data: emailLogs = [], isLoading: logsLoading, refetch: refetchLogs } = useQuery({
     queryKey: ['emailNotificationLogs'],
     queryFn: () => fetchEmailNotificationLogs(50),
+    enabled: canAutomationAccess,
   });
 
   const { data: emailProviders } = useQuery({
     queryKey: ['emailProviders'],
     queryFn: fetchEmailProviders,
+    enabled: canAutomationAccess,
   });
 
   const { data: schedulerStatus } = useQuery({
     queryKey: ['deadlineSchedulerStatus'],
     queryFn: fetchSchedulerStatus,
     refetchInterval: 10000,
+    enabled: canAutomationAccess,
   });
 
   // ─── Mutations ─────────────────────────────────────────────────────────────
@@ -362,7 +367,7 @@ export default function AutomationPage() {
   const activeRulesCount = rules.filter((r) => r.isActive).length;
 
   if (!isAccessLoading && !canAccess('automation')) {
-    return <AccessDenied module="Automation" requiredRole="Manager or above" />;
+    return <AccessDenied module="Automation" requiredRole="Admin or Super Admin" />;
   }
 
   // ─── Shared input class ────────────────────────────────────────────────────

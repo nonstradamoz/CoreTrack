@@ -11,8 +11,6 @@ import {
   Check,
   ChevronRight,
   Plus,
-  MessageSquare,
-  Activity,
   Layers,
   Sparkles,
   Inbox,
@@ -35,7 +33,6 @@ export function ContextualRightPanel({
 }: ContextualRightPanelProps) {
   const queryClient = useQueryClient();
   const { activeProject } = useProject();
-  const [activeTab, setActiveTab] = useState<'MESSAGES' | 'TODAY' | 'ACTIVITY'>('TODAY');
   const [filterMode, setFilterMode] = useState<'ALL' | 'OPEN' | 'CLOSED' | 'OVERDUE'>('ALL');
 
   const { data: currentUser } = useQuery({
@@ -100,40 +97,11 @@ export function ContextualRightPanel({
       className="hidden xl:flex flex-col w-[340px] border-l border-slate-200/80 dark:border-slate-800/80 bg-white dark:bg-slate-900 shrink-0 z-20 select-none transition-all duration-200 overflow-hidden"
       aria-label="Contextual Details Panel"
     >
-      {/* 1. TOP TABS: Messages | Today's Task | Last Activity */}
+      {/* 1. HEADER: Today's Task */}
       <div className="h-14 flex items-center justify-between px-4 border-b border-slate-100 dark:border-slate-800/80">
-        <div className="flex items-center gap-4 text-xs font-semibold text-slate-500 dark:text-slate-400">
-          <button
-            onClick={() => setActiveTab('MESSAGES')}
-            className={`transition pb-0.5 ${
-              activeTab === 'MESSAGES'
-                ? 'text-slate-900 dark:text-slate-100 font-bold border-b-2 border-slate-900 dark:border-slate-100'
-                : 'hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-          >
-            Messages
-          </button>
-          <button
-            onClick={() => setActiveTab('TODAY')}
-            className={`transition pb-0.5 ${
-              activeTab === 'TODAY'
-                ? 'text-slate-900 dark:text-slate-100 font-bold border-b-2 border-blue-600 text-blue-600 dark:text-blue-400'
-                : 'hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-          >
-            Today&apos;s Task
-          </button>
-          <button
-            onClick={() => setActiveTab('ACTIVITY')}
-            className={`transition pb-0.5 ${
-              activeTab === 'ACTIVITY'
-                ? 'text-slate-900 dark:text-slate-100 font-bold border-b-2 border-slate-900 dark:border-slate-100'
-                : 'hover:text-slate-800 dark:hover:text-slate-200'
-            }`}
-          >
-            Last Activity
-          </button>
-        </div>
+        <span className="text-xs font-bold text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 pb-0.5">
+          Today&apos;s Task
+        </span>
 
         <button
           onClick={onClose}
@@ -144,8 +112,7 @@ export function ContextualRightPanel({
         </button>
       </div>
 
-      {activeTab === 'TODAY' && (
-        <div className="flex-1 flex flex-col min-h-0">
+      <div className="flex-1 flex flex-col min-h-0">
           {/* 2. SUBHEADER: Today's Task & Date + "+ New Task" Button */}
           <div className="p-4 pb-3 flex items-start justify-between gap-2 border-b border-slate-100 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-900/40">
             <div>
@@ -331,37 +298,6 @@ export function ContextualRightPanel({
             )}
           </div>
         </div>
-      )}
-
-      {activeTab === 'MESSAGES' && (
-        <div className="flex-1 p-4 space-y-3 overflow-y-auto">
-          <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
-            Standup Feed & Messages
-          </div>
-          <div className="p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-xs text-slate-600 dark:text-slate-300">
-            <p className="font-semibold text-slate-900 dark:text-slate-100">Team Standup Channel</p>
-            <p className="mt-1 text-[11px] text-slate-500">Daily standup updates and automated ticket notifications are synchronized live.</p>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'ACTIVITY' && (
-        <div className="flex-1 p-4 space-y-3 overflow-y-auto">
-          <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
-            Recent System Activity
-          </div>
-          <div className="space-y-2">
-            <div className="p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-xs">
-              <span className="font-semibold text-blue-600 dark:text-blue-400">WebSocket Live</span>
-              <p className="text-[11px] text-slate-500 mt-0.5">Real-time sync active on project {activeProject?.key || 'CORE'}</p>
-            </div>
-            <div className="p-2.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 text-xs">
-              <span className="font-semibold text-emerald-600 dark:text-emerald-400">Automations Active</span>
-              <p className="text-[11px] text-slate-500 mt-0.5">Rules engine running on assigned tasks</p>
-            </div>
-          </div>
-        </div>
-      )}
     </aside>
   );
 }

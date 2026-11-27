@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Bell, Check, Clock, AlertTriangle, Layers, X, Mail } from 'lucide-react';
 import { fetchEmailNotificationLogs } from '../../lib/api';
+import { useModuleAccess } from '../../hooks/useModuleAccess';
 import Link from 'next/link';
 
 interface NotificationItem {
@@ -16,6 +17,7 @@ interface NotificationItem {
 }
 
 export function NotificationsPopover() {
+  const { canAccess } = useModuleAccess();
   const [isOpen, setIsOpen] = useState(false);
   const [dismissedIds, setDismissedIds] = useState<string[]>([]);
 
@@ -137,15 +139,17 @@ export function NotificationsPopover() {
           </div>
 
           {/* Footer Link */}
-          <div className="p-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 text-center">
-            <Link
-              href="/automation"
-              onClick={() => setIsOpen(false)}
-              className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline"
-            >
-              Open Automation & SLA Engine &rarr;
-            </Link>
-          </div>
+          {canAccess('automation') && (
+            <div className="p-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20 text-center">
+              <Link
+                href="/automation"
+                onClick={() => setIsOpen(false)}
+                className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 hover:underline"
+              >
+                Open Automation & SLA Engine &rarr;
+              </Link>
+            </div>
+          )}
         </div>
       )}
     </div>

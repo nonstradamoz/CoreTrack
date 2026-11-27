@@ -102,7 +102,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         getUserRoleTier(user.id, projectKey),
         db.query.users.findFirst({
           where: eq(users.id, user.id),
-          columns: { mustChangePassword: true, passwordHash: true },
+          columns: { designation: true, mustChangePassword: true, passwordHash: true },
         }),
       ]);
 
@@ -111,6 +111,7 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
           id: user.id,
           email: user.email,
           fullName: user.fullName,
+          designation: dbUserFlags?.designation || null,
           userType: user.userType,
           globalPermissions: user.globalPermissions.toString(),
           effectivePermissions: permissions.toString(),

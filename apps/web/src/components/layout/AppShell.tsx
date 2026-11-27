@@ -7,7 +7,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useProject } from '../../context/ProjectContext';
 import { fetchTickets, fetchCurrentUser, createTicket, fetchChatChannels, logoutUser, getAuthToken, clearAuthToken, Ticket } from '../../lib/api';
 import { ChatWorkspace } from '../chat/ChatWorkspace';
-import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { NotificationsPopover } from '../notifications/NotificationsPopover';
 import { Logo } from '../brand/Logo';
 import { useProjectWebSocket } from '../../hooks/useProjectWebSocket';
@@ -463,7 +462,7 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
                 </Link>
               )}
 
-              {/* Automation & SLA Engine — Manager+ / Admin (requires AUTOMATION_MANAGE) */}
+              {/* Automation & SLA Engine — Admin & Super Admin only */}
               {canAccess('automation') && (
                 <Link
                   href="/automation"
@@ -613,7 +612,7 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
                     {currentUser?.fullName || 'Profile'}
                   </div>
                   <div className="truncate text-[10px] text-slate-400 leading-tight">
-                    {currentUser?.roleName || 'Member'}
+                    {currentUser?.designation || currentUser?.roleName || 'Member'}
                   </div>
                 </div>
                 <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
@@ -777,9 +776,6 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
             >
               <PanelRight className="h-4 w-4" />
             </button>
-
-            {/* Persona Switcher Menu */}
-            <UserProfileMenu />
           </div>
         </header>
 

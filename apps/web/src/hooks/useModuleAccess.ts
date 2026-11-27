@@ -25,6 +25,9 @@ export function useModuleAccess() {
   function canAccess(module: AppModule): boolean {
     if (isLoading) return true;
     if (isOrgAdmin) return true;
+    if (module === 'automation') {
+      return isOrgAdmin || roleTier >= 4;
+    }
     if (module === 'mail') {
       return roleTier >= 3 || (rawPermissions & Permissions.AUTOMATION_MANAGE) === Permissions.AUTOMATION_MANAGE;
     }

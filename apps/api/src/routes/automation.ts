@@ -1,7 +1,7 @@
-import { FastifyPluginAsync } from 'fastify';
+import { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { db, automationRules, emailNotificationLogs, projects, eq, and, desc } from '@coretrack/db';
+import { db, automationRules, emailNotificationLogs, projects, eq, desc } from '@coretrack/db';
 import { CreateAutomationRuleSchema, UpdateAutomationRuleSchema, Permissions, hasPermission } from '@coretrack/shared';
 import {
   runDeadlineAndEscalationScan,
@@ -13,6 +13,33 @@ import { getCurrentUser, getUserRoleTier, getEffectiveUserPermissions } from '..
 
 export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  async function requireAdminOrSuperAdmin(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
+    const user = await getCurrentUser(request);
+    if (!user) {
+      reply.status(401).send({ error: 'Unauthorized' });
+      return false;
+    }
+
+    const callerTierInfo = await getUserRoleTier(user.id);
+    const { permissions } = await getEffectiveUserPermissions(user.id);
+    const isAllowed =
+      callerTierInfo.tier >= 4 ||
+      hasPermission(permissions, Permissions.ORG_ADMIN);
+
+    if (!isAllowed) {
+      reply.status(403).send({
+        type: 'https://errors.coretrack.internal/forbidden',
+        title: 'Access Denied',
+        status: 403,
+        error: 'FORBIDDEN',
+        message: 'Only Admins and Super Admins can access Automation & SLA Engine.',
+      });
+      return false;
+    }
+
+    return true;
+  }
 
   // 1. List Automation Rules for a Project
   app.get(
@@ -27,6 +54,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
+      if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       const { projectKey } = request.params;
       const proj = await db.query.projects.findFirst({
         where: eq(projects.key, projectKey),
@@ -59,6 +87,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
+      if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       const { projectKey } = request.params;
       const body = request.body;
 
@@ -102,6 +131,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
+      if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       const { ruleId } = request.params;
       const updates = request.body;
 
@@ -136,6 +166,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
+      if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       const { ruleId } = request.params;
 
       const [deleted] = await db
@@ -160,7 +191,8 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ['Automation'],
       },
     },
-    async (_request, reply) => {
+    async (request, reply) => {
+      if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       const summary = await runDeadlineAndEscalationScan();
       return reply.send({
         success: true,
@@ -190,6 +222,8 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         const caller = await getCurrentUser(request);
         if (!caller) return reply.send({ data: [], total: 0 });
         recipientFilter = caller.email;
+      } else {
+        if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       }
 
       const logs = await db.query.emailNotificationLogs.findMany({
@@ -213,7 +247,8 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ['Automation'],
       },
     },
-    async (_request, reply) => {
+    async (request, reply) => {
+      if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       await db.delete(emailNotificationLogs);
       return reply.send({
         success: true,
@@ -231,7 +266,8 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ['Automation'],
       },
     },
-    async (_request, reply) => {
+    async (request, reply) => {
+      if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       const status = getProviderStatus();
       return reply.send({
         success: true,
@@ -249,7 +285,8 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ['Automation'],
       },
     },
-    async (_request, reply) => {
+    async (request, reply) => {
+      if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       const status = getSchedulerStatus();
       return reply.send({
         success: true,
@@ -258,7 +295,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // 10. Configure Background Deadline Scheduler (Higher Authorities & Automation Managers)
+  // 10. Configure Background Deadline Scheduler (Admin & Super Admin only)
   app.post(
     '/automation/scheduler',
     {
@@ -273,26 +310,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const user = await getCurrentUser(request);
-      if (!user) return reply.status(401).send({ error: 'Unauthorized' });
-
-      const callerTierInfo = await getUserRoleTier(user.id);
-      const { permissions } = await getEffectiveUserPermissions(user.id);
-
-      const canManage =
-        callerTierInfo.tier >= 4 ||
-        hasPermission(permissions, Permissions.AUTOMATION_MANAGE) ||
-        hasPermission(permissions, Permissions.ORG_ADMIN);
-
-      if (!canManage) {
-        return reply.status(403).send({
-          type: 'https://errors.coretrack.internal/forbidden',
-          title: 'Access Denied',
-          status: 403,
-          error: 'FORBIDDEN',
-          message: 'Only higher authorities (Super Admin & Admin) and automation managers can configure the background deadline scheduler.',
-        });
-      }
+      if (!(await requireAdminOrSuperAdmin(request, reply))) return;
 
       const updated = await updateSchedulerConfig(request.body);
       return reply.send({
