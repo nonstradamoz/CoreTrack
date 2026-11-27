@@ -91,15 +91,24 @@ if (typeof window !== 'undefined' && !(window as any).__coretrackFetchPatched) {
 
     if (isApiRequest) {
       const token = getAuthToken();
-      if (token) {
-        const headers = new Headers(
-          init?.headers || (input instanceof Request ? input.headers : undefined)
-        );
-        if (!headers.has('Authorization')) {
-          headers.set('Authorization', `Bearer ${token}`);
-        }
-        return originalFetch(input, { ...init, headers });
+      const headers = new Headers(
+        init?.headers || (input instanceof Request ? input.headers : undefined)
+      );
+      if (token && !headers.has('Authorization')) {
+        headers.set('Authorization', `Bearer ${token}`);
       }
+      return originalFetch(input, { ...init, headers }).then((res) => {
+        if (
+          res.status === 401 &&
+          !url.includes('/api/v1/auth/login') &&
+          !url.includes('/api/v1/auth/setup-password') &&
+          window.location.pathname !== '/login'
+        ) {
+          clearAuthToken();
+          window.location.replace('/login');
+        }
+        return res;
+      });
     }
     return originalFetch(input, init);
   };

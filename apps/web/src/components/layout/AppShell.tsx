@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useProject } from '../../context/ProjectContext';
-import { fetchTickets, fetchCurrentUser, createTicket, fetchChatChannels, logoutUser, Ticket } from '../../lib/api';
+import { fetchTickets, fetchCurrentUser, createTicket, fetchChatChannels, logoutUser, getAuthToken, clearAuthToken, Ticket } from '../../lib/api';
 import { ChatWorkspace } from '../chat/ChatWorkspace';
 import { UserProfileMenu } from '../auth/UserProfileMenu';
 import { NotificationsPopover } from '../notifications/NotificationsPopover';
@@ -110,18 +110,28 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
     return () => clearInterval(interval);
   }, []);
 
-  const { data: currentUser, isError: isAuthError } = useQuery({
+  const router = useRouter();
+  const hasToken = typeof window !== 'undefined' ? Boolean(getAuthToken()) : false;
+
+  const {
+    data: currentUser,
+    isLoading: isLoadingUser,
+    isError: isAuthError,
+  } = useQuery({
     queryKey: ['currentUser'],
     queryFn: fetchCurrentUser,
+    enabled: hasToken,
     retry: false,
   });
 
-  const router = useRouter();
   useEffect(() => {
-    if (isAuthError && pathname !== '/login') {
-      router.replace('/login');
+    if (!hasToken || isAuthError || (!isLoadingUser && !currentUser)) {
+      clearAuthToken();
+      if (pathname !== '/login') {
+        router.replace('/login');
+      }
     }
-  }, [isAuthError, pathname, router]);
+  }, [hasToken, isAuthError, isLoadingUser, currentUser, pathname, router]);
 
   const initials = currentUser?.fullName
     ? currentUser.fullName
@@ -252,6 +262,15 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Block rendering any protected workspace UI until session is verified
+  if (!hasToken || isLoadingUser || isAuthError || !currentUser) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-[#F5F6F8] dark:bg-[#111318] text-xs font-medium text-slate-500 dark:text-slate-400">
+        Verifying session...
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#F5F6F8] dark:bg-[#111318] text-[#17191F] dark:text-[#F3F4F6] font-sans transition-colors duration-150">
@@ -581,11 +600,32 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
               <Link
                 href="/profile"
                 title="View Profile & Statuses"
-                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer text-left ${
-                  pathname.startsWith('/profile')
-                    ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
-                    : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-                }`}
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer text-left ${pathname.startsWith('/profile')
+                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
+                  : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
+              >
+                <div className="h-7 w-7 rounded-lg bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0">
+                  {initials}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-bold text-slate-900 dark:text-slate-100 leading-tight">
+                    {currentUser?.fullName || 'Profile'}
+                  </div>
+                  <div className="truncate text-[10px] text-slate-400 leading-tight">
+                    {currentUser?.roleName || 'Member'}
+                  </div>
+                </div>
+                <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+              </Link>
+
+              <Link
+                href="/profile"
+                title="View Profile & Statuses"
+                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer text-left ${pathname.startsWith('/profile')
+                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
+                  : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
+                  }`}
               >
                 <div className="h-7 w-7 rounded-lg bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0">
                   {initials}

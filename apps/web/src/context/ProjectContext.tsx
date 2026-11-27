@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { fetchProjects, Project } from '../lib/api';
+import { fetchProjects, getAuthToken, Project } from '../lib/api';
 
 interface ProjectContextValue {
   projects: Project[];
@@ -50,6 +50,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const { data: projects = [], isLoading: isLoadingProjects } = useQuery({
     queryKey: ['projects'],
     queryFn: fetchProjects,
+    enabled: typeof window !== 'undefined' && Boolean(getAuthToken()),
   });
 
   const activeProject =

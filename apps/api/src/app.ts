@@ -25,6 +25,7 @@ import { teamRoutes } from './routes/teams.js';
 import { mailRoutes } from './routes/mail.js';
 import { chatRoutes } from './routes/chat.js';
 import { helpdeskRoutes } from './routes/helpdesk.js';
+import { getCurrentUser } from './auth/auth.js';
 import { db, departments } from '@coretrack/db';
 import { registerClient } from './ws.js';
 import { WebSocket } from 'ws';
@@ -85,6 +86,27 @@ export async function buildApp() {
 
   await app.register(swaggerUi, {
     routePrefix: '/docs',
+  });
+
+  // Global Authentication Guard for all protected /api/v1/* routes
+  const PUBLIC_API_ROUTES = new Set([
+    '/api/v1/auth/login',
+    '/api/v1/auth/setup-password',
+    '/api/v1/auth/logout',
+  ]);
+  const PUBLIC_API_PREFIXES = ['/api/v1/health', '/api/v1/webhooks/'];
+
+  app.addHook('preHandler', async (request, reply) => {
+    if (request.method === 'OPTIONS') return;
+    const urlPath = request.url.split('?')[0];
+    if (!urlPath.startsWith('/api/v1/')) return;
+    if (PUBLIC_API_ROUTES.has(urlPath)) return;
+    if (PUBLIC_API_PREFIXES.some((prefix) => urlPath.startsWith(prefix))) return;
+
+    const caller = await getCurrentUser(request);
+    if (!caller) {
+      return reply.status(401).send({ error: 'Authentication required' });
+    }
   });
 
   // Register Routes
