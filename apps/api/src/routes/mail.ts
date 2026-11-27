@@ -75,24 +75,29 @@ export const mailRoutes: FastifyPluginAsync = async (fastify) => {
 
       const providerStatus = getProviderStatus();
 
-      // Aggregate log stats
-      const allLogs = await db
-        .select({
-          status: emailNotificationLogs.status,
-          provider: emailNotificationLogs.provider,
-        })
-        .from(emailNotificationLogs);
+      // Aggregate log stats safely
+      let allLogs: Array<{ status: string; provider: string | null }> = [];
+      let recentLogs: any[] = [];
+      try {
+        allLogs = await db
+          .select({
+            status: emailNotificationLogs.status,
+            provider: emailNotificationLogs.provider,
+          })
+          .from(emailNotificationLogs);
+
+        recentLogs = await db
+          .select()
+          .from(emailNotificationLogs)
+          .orderBy(desc(emailNotificationLogs.sentAt))
+          .limit(5);
+      } catch (err) {
+        request.log.warn({ err }, 'Failed to query emailNotificationLogs in /status; returning empty telemetry');
+      }
 
       const totalSent = allLogs.filter((l) => l.status === 'SENT').length;
       const totalFailed = allLogs.filter((l) => l.status === 'FAILED').length;
       const totalDispatched = allLogs.length;
-
-      // Recent 5 logs
-      const recentLogs = await db
-        .select()
-        .from(emailNotificationLogs)
-        .orderBy(desc(emailNotificationLogs.sentAt))
-        .limit(5);
 
       return reply.send({
         data: {
@@ -438,22 +443,28 @@ export const mailRoutes: FastifyPluginAsync = async (fastify) => {
 
       const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-      const [logs, countResult] = await Promise.all([
-        db
-          .select()
-          .from(emailNotificationLogs)
-          .where(whereClause)
-          .orderBy(desc(emailNotificationLogs.sentAt))
-          .limit(limit)
-          .offset(offset),
+      let logs: any[] = [];
+      let total = 0;
+      try {
+        const [logsRes, countResult] = await Promise.all([
+          db
+            .select()
+            .from(emailNotificationLogs)
+            .where(whereClause)
+            .orderBy(desc(emailNotificationLogs.sentAt))
+            .limit(limit)
+            .offset(offset),
 
-        db
-          .select({ count: sql<number>`count(*)` })
-          .from(emailNotificationLogs)
-          .where(whereClause),
-      ]);
-
-      const total = Number(countResult[0]?.count || 0);
+          db
+            .select({ count: sql<number>`count(*)` })
+            .from(emailNotificationLogs)
+            .where(whereClause),
+        ]);
+        logs = logsRes;
+        total = Number(countResult[0]?.count || 0);
+      } catch (err) {
+        request.log.warn({ err }, 'Failed to query emailNotificationLogs in /logs');
+      }
 
       return reply.send({
         data: {

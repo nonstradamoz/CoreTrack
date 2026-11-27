@@ -226,15 +226,23 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         if (!(await requireAdminOrSuperAdmin(request, reply))) return;
       }
 
-      const logs = await db.query.emailNotificationLogs.findMany({
-        where: recipientFilter ? eq(emailNotificationLogs.recipientEmail, recipientFilter) : undefined,
-        orderBy: desc(emailNotificationLogs.sentAt),
-        limit,
-      });
-      return reply.send({
-        data: logs,
-        total: logs.length,
-      });
+      try {
+        const logs = await db.query.emailNotificationLogs.findMany({
+          where: recipientFilter ? eq(emailNotificationLogs.recipientEmail, recipientFilter) : undefined,
+          orderBy: desc(emailNotificationLogs.sentAt),
+          limit,
+        });
+        return reply.send({
+          data: logs,
+          total: logs.length,
+        });
+      } catch (err) {
+        request.log.warn({ err }, 'Failed to query emailNotificationLogs in /automation/email-logs');
+        return reply.send({
+          data: [],
+          total: 0,
+        });
+      }
     }
   );
 

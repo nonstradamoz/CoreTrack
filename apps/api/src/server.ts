@@ -39,6 +39,19 @@ async function ensureSchemaColumns() {
       error_message text,
       sent_at timestamptz NOT NULL DEFAULT now()
     );
+    ALTER TABLE email_notification_logs
+      ADD COLUMN IF NOT EXISTS recipient_email varchar(255),
+      ADD COLUMN IF NOT EXISTS recipient_name varchar(150),
+      ADD COLUMN IF NOT EXISTS subject varchar(255),
+      ADD COLUMN IF NOT EXISTS html_body text,
+      ADD COLUMN IF NOT EXISTS text_body text,
+      ADD COLUMN IF NOT EXISTS notification_type varchar(50) DEFAULT 'DIRECT_MAIL',
+      ADD COLUMN IF NOT EXISTS ticket_id uuid,
+      ADD COLUMN IF NOT EXISTS project_id uuid,
+      ADD COLUMN IF NOT EXISTS provider varchar(50) DEFAULT 'RESEND',
+      ADD COLUMN IF NOT EXISTS status varchar(20) DEFAULT 'SENT',
+      ADD COLUMN IF NOT EXISTS error_message text,
+      ADD COLUMN IF NOT EXISTS sent_at timestamptz DEFAULT now();
     CREATE INDEX IF NOT EXISTS idx_email_logs_type_recipient ON email_notification_logs (notification_type, recipient_email);
     CREATE INDEX IF NOT EXISTS idx_email_logs_ticket ON email_notification_logs (ticket_id);
     CREATE INDEX IF NOT EXISTS idx_email_logs_project ON email_notification_logs (project_id);
