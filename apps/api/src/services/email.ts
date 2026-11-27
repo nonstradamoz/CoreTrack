@@ -295,6 +295,7 @@ export interface EmailDispatchOptions {
     | string;
   ticketId?: string;
   projectId?: string;
+  preferredProvider?: EmailProviderConfig['name'];
 }
 
 /**
@@ -308,7 +309,7 @@ export async function sendEmailNotification(options: EmailDispatchOptions): Prom
   logId?: string;
   error?: string;
 }> {
-  const { to, toName, subject, html, text, notificationType, ticketId, projectId } = options;
+  const { to, toName, subject, html, text, notificationType, ticketId, projectId, preferredProvider } = options;
 
   let logId: string | undefined;
   try {
@@ -333,6 +334,13 @@ export async function sendEmailNotification(options: EmailDispatchOptions): Prom
   }
 
   const providers = getMailProviders();
+  if (preferredProvider) {
+    const idx = providers.findIndex((p) => p.name === preferredProvider);
+    if (idx > 0) {
+      const [chosen] = providers.splice(idx, 1);
+      providers.unshift(chosen);
+    }
+  }
   const errors: string[] = [];
   let successfulProvider: string | null = null;
   let failoverOccurred = false;
@@ -766,6 +774,7 @@ export async function sendDirectOrBroadcastEmail(params: {
   projectId?: string;
   ticketId?: string;
   projectName?: string;
+  preferredProvider?: EmailProviderConfig['name'];
 }) {
   const {
     recipient,
@@ -782,6 +791,7 @@ export async function sendDirectOrBroadcastEmail(params: {
     projectId,
     ticketId,
     projectName,
+    preferredProvider,
   } = params;
 
   // Format content paragraphs and linebreaks nicely if not already HTML
@@ -830,5 +840,6 @@ export async function sendDirectOrBroadcastEmail(params: {
     notificationType,
     projectId,
     ticketId,
+    preferredProvider,
   });
 }

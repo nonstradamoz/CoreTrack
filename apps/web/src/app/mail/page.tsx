@@ -138,6 +138,7 @@ export default function MailingPage() {
   const [content, setContent] = useState('');
   const [ctaText, setCtaText] = useState('Open CoreTrack');
   const [ctaUrl, setCtaUrl] = useState('');
+  const [selectedGateway, setSelectedGateway] = useState<'' | 'RESEND' | 'MAILJET' | 'BREVO'>('');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [userSearch, setUserSearch] = useState('');
 
@@ -169,7 +170,13 @@ export default function MailingPage() {
     enabled: isAuthorized,
   });
 
-  const { data: logsData, isLoading: isLogsLoading, refetch: refetchLogs } = useQuery<MailLogsResponse>({
+  const {
+    data: logsData,
+    isLoading: isLogsLoading,
+    isError: isLogsError,
+    error: logsError,
+    refetch: refetchLogs,
+  } = useQuery<MailLogsResponse>({
     queryKey: ['mailLogs', logsStatusFilter, logsSearch, logsPage],
     queryFn: () => fetchMailLogs({ status: logsStatusFilter, search: logsSearch, page: logsPage, limit: 15 }),
     enabled: isAuthorized && activeTab === 'logs',
@@ -274,6 +281,7 @@ export default function MailingPage() {
       content: content.trim(),
       ctaText: ctaText.trim() || undefined,
       ctaUrl: ctaUrl.trim() || undefined,
+      preferredProvider: selectedGateway || undefined,
     });
   }
 
@@ -723,7 +731,27 @@ export default function MailingPage() {
                 </div>
               </div>
 
-              {/* Footer actions */}
+              {/* Gateway & Footer actions */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-slate-100 dark:border-slate-800">
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-medium text-slate-700 dark:text-slate-300">
+                    Mail Gateway
+                  </label>
+                  <select
+                    value={selectedGateway}
+                    onChange={(e) => setSelectedGateway(e.target.value as '' | 'RESEND' | 'MAILJET' | 'BREVO')}
+                    className={inputCls}
+                  >
+                    <option value="">Auto ({primaryProvider})</option>
+                    {(statusData?.providers || []).map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name} {p.isPrimary ? '(Primary)' : `(Priority ${p.priority})`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
@@ -790,7 +818,7 @@ export default function MailingPage() {
                     </div>
                     <div className="flex justify-between">
                       <span>Gateway:</span>
-                      <span className="font-mono font-medium text-slate-700 dark:text-slate-300">{primaryProvider}</span>
+                      <span className="font-mono font-medium text-slate-700 dark:text-slate-300">{selectedGateway || primaryProvider}</span>
                     </div>
                   </div>
                   <div className="inline-block px-3 py-1.5 bg-blue-600 text-white rounded text-[11px] font-medium">
@@ -859,7 +887,15 @@ export default function MailingPage() {
           </div>
 
           {/* Table */}
-          {isLogsLoading ? (
+          {isLogsError ? (
+            <div className="py-12 px-4 flex flex-col items-center gap-2 rounded-xl border border-rose-200 dark:border-rose-900 bg-rose-50/70 dark:bg-rose-950/40 text-center">
+              <AlertCircle className="h-6 w-6 text-rose-500" />
+              <p className="text-sm font-medium text-rose-700 dark:text-rose-300">Failed to load delivery logs</p>
+              <p className="text-xs text-rose-600 dark:text-rose-400">
+                {(logsError as Error)?.message || 'Check your connection or permissions and try refreshing.'}
+              </p>
+            </div>
+          ) : isLogsLoading ? (
             <div className="py-16 text-center">
               <RefreshCw className="h-5 w-5 animate-spin text-blue-600 mx-auto mb-2" />
               <p className="text-xs text-slate-400">Loading logs…</p>
@@ -909,6 +945,11 @@ export default function MailingPage() {
                           <span className={`h-1.5 w-1.5 rounded-full ${log.status === 'SENT' ? 'bg-emerald-500' : 'bg-rose-500'}`} />
                           {log.status}
                         </span>
+                        {log.errorMessage && (
+                          <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 max-w-[180px] truncate" title={log.errorMessage}>
+                            {log.errorMessage}
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-[11px] text-slate-400 font-mono whitespace-nowrap">
                         {new Date(log.sentAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}

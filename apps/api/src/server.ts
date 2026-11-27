@@ -19,6 +19,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 async function ensureSchemaColumns() {
   await pool.query(`
     ALTER TABLE projects
+      ADD COLUMN IF NOT EXISTS admin_access_mode varchar(20) NOT NULL DEFAULT 'ALL',
       ADD COLUMN IF NOT EXISTS admin_visible_to jsonb NOT NULL DEFAULT '[]'::jsonb;
     ALTER TABLE tickets
       ADD COLUMN IF NOT EXISTS milestone_id uuid REFERENCES project_milestones(id) ON DELETE SET NULL,

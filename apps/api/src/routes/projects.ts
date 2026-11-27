@@ -58,14 +58,21 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
   }
 
   function isProjectVisibleToCaller(
-    project: { adminVisibleTo?: unknown },
+    project: { adminAccessMode?: string | null; adminVisibleTo?: unknown },
     callerId: string,
     callerTier: number
   ): boolean {
     if (callerTier !== 4) return true;
+    const mode = project.adminAccessMode || 'ALL';
+    if (mode === 'NONE') return false;
+    if (mode === 'SELECTED') {
+      return Array.isArray(project.adminVisibleTo) && project.adminVisibleTo.includes(callerId);
+    }
     const allowed = project.adminVisibleTo;
-    if (!Array.isArray(allowed) || allowed.length === 0) return true;
-    return allowed.includes(callerId);
+    if (Array.isArray(allowed) && allowed.length > 0) {
+      return allowed.includes(callerId);
+    }
+    return true;
   }
 
   // 1. Project Dashboard Metrics (Placed BEFORE /:key so it is not intercepted)
@@ -585,6 +592,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           deadline: z.string().datetime().optional().nullable(),
           projectManagerId: z.string().uuid().optional().nullable(),
           reviewerId: z.string().uuid().optional().nullable(),
+          adminAccessMode: z.enum(['NONE', 'SELECTED', 'ALL']).optional(),
           adminVisibleTo: z.array(z.string().uuid()).optional(),
         }),
       },
@@ -623,6 +631,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         deadline,
         projectManagerId,
         reviewerId,
+        adminAccessMode,
         adminVisibleTo,
       } = request.body;
 
@@ -699,7 +708,14 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           deadlineSetByRoleTier: deadline ? callerTierInfo.tier : 1,
           projectManagerId: resolvedPmId,
           reviewerId: resolvedReviewerId,
-          adminVisibleTo: callerTierInfo.tier >= 5 && Array.isArray(adminVisibleTo) ? adminVisibleTo : [],
+          adminAccessMode:
+            callerTierInfo.tier >= 5
+              ? (adminAccessMode || 'NONE')
+              : 'ALL',
+          adminVisibleTo:
+            callerTierInfo.tier >= 5 && (adminAccessMode || 'NONE') === 'SELECTED' && Array.isArray(adminVisibleTo)
+              ? adminVisibleTo
+              : [],
         })
         .returning();
 
@@ -788,6 +804,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           reviewerId: z.string().uuid().optional().nullable(),
           primaryTeamId: z.string().uuid().optional(),
           archived: z.boolean().optional(),
+          adminAccessMode: z.enum(['NONE', 'SELECTED', 'ALL']).optional(),
           adminVisibleTo: z.array(z.string().uuid()).optional(),
         }),
       },
@@ -911,7 +928,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         updateData.archived = updates.archived;
         auditChanges.push(updates.archived ? 'Archived project' : 'Unarchived project');
       }
-      if (updates.adminVisibleTo !== undefined) {
+      if (updates.adminAccessMode !== undefined || updates.adminVisibleTo !== undefined) {
         if (callerTierInfo.tier < 5) {
           return reply.status(403).send({
             type: 'https://errors.coretrack.internal/forbidden',
@@ -921,7 +938,15 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
             message: 'Only Super Admins can configure per-admin project visibility.',
           });
         }
-        updateData.adminVisibleTo = updates.adminVisibleTo;
+        if (updates.adminAccessMode !== undefined) {
+          updateData.adminAccessMode = updates.adminAccessMode;
+          if (updates.adminAccessMode !== 'SELECTED') {
+            updateData.adminVisibleTo = [];
+          }
+        }
+        if (updates.adminVisibleTo !== undefined) {
+          updateData.adminVisibleTo = updates.adminVisibleTo;
+        }
         auditChanges.push('Updated Admin visibility permissions');
       }
 

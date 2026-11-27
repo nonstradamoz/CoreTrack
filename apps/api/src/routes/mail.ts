@@ -217,6 +217,7 @@ export const mailRoutes: FastifyPluginAsync = async (fastify) => {
           content: z.string().min(5),
           ctaText: z.string().optional(),
           ctaUrl: z.string().optional(),
+          preferredProvider: z.enum(['RESEND', 'MAILJET', 'BREVO']).optional(),
         }),
       },
     },
@@ -237,6 +238,7 @@ export const mailRoutes: FastifyPluginAsync = async (fastify) => {
         content,
         ctaText,
         ctaUrl,
+        preferredProvider,
       } = request.body;
 
       // Resolve targets: array of { email: string, fullName?: string }
@@ -372,6 +374,7 @@ export const mailRoutes: FastifyPluginAsync = async (fastify) => {
             projectId,
             ticketId,
             projectName: resolvedProjectName,
+            preferredProvider,
           });
           results.push({ email: target.email, success: res.success, provider: res.provider, error: res.error });
         } catch (dispatchErr: any) {

@@ -89,7 +89,8 @@ export const projects = pgTable('projects', {
   reviewerId: uuid('reviewer_id').references(() => users.id, { onDelete: 'set null' }),
   archived: boolean('archived').default(false).notNull(),
   nextTicketNumber: integer('next_ticket_number').default(1).notNull(),
-  // Per-project admin visibility: empty array = all admins can see; non-empty = only listed admin IDs (+ super admins)
+  // Per-project admin visibility: NONE = Super Admin only, SELECTED = adminVisibleTo IDs, ALL = all Admins
+  adminAccessMode: varchar('admin_access_mode', { length: 20 }).default('ALL').notNull(),
   adminVisibleTo: jsonb('admin_visible_to').$type<string[]>().default([]).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),

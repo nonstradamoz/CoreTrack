@@ -183,6 +183,7 @@ export interface Project {
   projectManagerId?: string | null;
   reviewerId?: string | null;
   archived?: boolean;
+  adminAccessMode?: 'NONE' | 'SELECTED' | 'ALL';
   adminVisibleTo?: string[];
   nextTicketNumber?: number;
   totalTicketsCount?: number;
@@ -1628,6 +1629,7 @@ export async function createProject(data: {
   githubLastSyncedAt?: string | null;
   projectManagerId?: string | null;
   reviewerId?: string | null;
+  adminAccessMode?: 'NONE' | 'SELECTED' | 'ALL';
   adminVisibleTo?: string[];
 }): Promise<Project> {
   const res = await fetch(`${API_URL}/api/v1/projects`, {
@@ -1655,6 +1657,7 @@ export async function updateProject(
     reviewerId?: string | null;
     primaryTeamId?: string;
     archived?: boolean;
+    adminAccessMode?: 'NONE' | 'SELECTED' | 'ALL';
     adminVisibleTo?: string[];
   }
 ): Promise<Project> {
@@ -1952,6 +1955,7 @@ export interface SendMailPayload {
   content: string;
   ctaText?: string;
   ctaUrl?: string;
+  preferredProvider?: 'RESEND' | 'MAILJET' | 'BREVO';
 }
 
 export interface MailLogsResponse {

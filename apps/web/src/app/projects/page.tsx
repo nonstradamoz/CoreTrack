@@ -15,6 +15,7 @@ import {
   Project,
 } from '../../lib/api';
 import { CreateProjectModal } from '../../components/projects/CreateProjectModal';
+import { AdminVisibilitySelector, AdminAccessMode } from '../../components/projects/AdminVisibilitySelector';
 import { ProjectSummaryDrawer } from '../../components/projects/ProjectSummaryCard';
 import { RichTextEditor, stripHtml } from '../../components/ui/RichText';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -601,6 +602,10 @@ function EditProjectModal({
     project.deadline ? new Date(project.deadline).toISOString().split('T')[0] : ''
   );
   const [archived, setArchived] = useState(!!project.archived);
+  const [adminAccessMode, setAdminAccessMode] = useState<AdminAccessMode>(
+    project.adminAccessMode ||
+      (project.adminVisibleTo && project.adminVisibleTo.length > 0 ? 'SELECTED' : 'ALL')
+  );
   const [adminVisibleTo, setAdminVisibleTo] = useState<string[]>(project.adminVisibleTo || []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
@@ -620,7 +625,12 @@ function EditProjectModal({
         startDate: startDate ? new Date(startDate).toISOString() : null,
         deadline: deadline ? new Date(deadline).toISOString() : null,
         archived,
-        ...(isSuperAdmin ? { adminVisibleTo } : {}),
+        ...(isSuperAdmin
+          ? {
+              adminAccessMode,
+              adminVisibleTo: adminAccessMode === 'SELECTED' ? adminVisibleTo : [],
+            }
+          : {}),
       });
       onSuccess();
     } catch (err: any) {
@@ -769,44 +779,14 @@ function EditProjectModal({
             </label>
           </div>
 
-          {isSuperAdmin && adminUsers.length > 0 && (
-            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300">
-                  <ShieldCheck className="h-3.5 w-3.5 text-indigo-500" />
-                  Admin Visibility
-                </span>
-                <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                  {adminVisibleTo.length === 0 ? 'All Admins' : `${adminVisibleTo.length} selected`}
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Leave unchecked to allow all Admins, or select specific Admins who can view this project.
-              </p>
-              <div className="grid grid-cols-2 gap-1.5 max-h-28 overflow-y-auto pt-1">
-                {adminUsers.map((u) => {
-                  const checked = adminVisibleTo.includes(u.id);
-                  return (
-                    <label
-                      key={u.id}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:border-indigo-400"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={(e) => {
-                          setAdminVisibleTo((prev) =>
-                            e.target.checked ? [...prev, u.id] : prev.filter((id) => id !== u.id)
-                          );
-                        }}
-                        className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                      />
-                      <span className="truncate">{u.fullName}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
+          {isSuperAdmin && (
+            <AdminVisibilitySelector
+              mode={adminAccessMode}
+              onModeChange={setAdminAccessMode}
+              selectedAdminIds={adminVisibleTo}
+              onSelectedAdminIdsChange={setAdminVisibleTo}
+              adminUsers={adminUsers}
+            />
           )}
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
