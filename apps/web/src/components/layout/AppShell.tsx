@@ -619,28 +619,6 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
                 <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
               </Link>
 
-              <Link
-                href="/profile"
-                title="View Profile & Statuses"
-                className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-xl text-xs font-semibold transition cursor-pointer text-left ${pathname.startsWith('/profile')
-                  ? 'bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400'
-                  : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800'
-                  }`}
-              >
-                <div className="h-7 w-7 rounded-lg bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0">
-                  {initials}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-bold text-slate-900 dark:text-slate-100 leading-tight">
-                    {currentUser?.fullName || 'Profile'}
-                  </div>
-                  <div className="truncate text-[10px] text-slate-400 leading-tight">
-                    {currentUser?.roleName || 'Member'}
-                  </div>
-                </div>
-                <User className="h-3.5 w-3.5 text-slate-400 shrink-0" />
-              </Link>
-
               <button
                 type="button"
                 onClick={async () => {
