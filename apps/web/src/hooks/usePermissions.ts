@@ -7,12 +7,15 @@ import { API_URL } from '../lib/api';
 
 export function usePermissions() {
   const { activeProject } = useProject();
-  const projectKey = activeProject?.key || 'CORE';
+  const projectKey = activeProject?.key;
 
   const { data, isLoading } = useQuery({
-    queryKey: ['currentUserPermissions', projectKey],
+    queryKey: ['currentUserPermissions', projectKey || 'global'],
     queryFn: async () => {
-      const res = await fetch(`${API_URL}/api/v1/auth/me?projectKey=${encodeURIComponent(projectKey)}`);
+      const url = projectKey
+        ? `${API_URL}/api/v1/auth/me?projectKey=${encodeURIComponent(projectKey)}`
+        : `${API_URL}/api/v1/auth/me`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to fetch user permissions');
       const json = await res.json();
       return json.data;

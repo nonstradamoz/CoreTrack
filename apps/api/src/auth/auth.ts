@@ -66,7 +66,7 @@ export async function getEffectiveUserPermissions(userId: string, projectKey?: s
   }
 
   let effective = user.globalPermissions;
-  let activeRoleName = 'Member';
+  let activeRoleName: string | undefined = undefined;
 
   if (projectKey) {
     const project = await db.query.projects.findFirst({
@@ -102,10 +102,14 @@ export async function getUserRoleTier(userId: string, projectKey?: string): Prom
   if ((permissions & Permissions.ORG_ADMIN) === Permissions.ORG_ADMIN || name.includes('super admin')) {
     return { tier: 5, roleName: 'Super Admin' };
   }
-  if (name.includes('admin') || (permissions & Permissions.PROJECT_ADMIN) === Permissions.PROJECT_ADMIN) {
+  if (name.includes('admin') || (permissions & Permissions.PROJECT_DELETE) === Permissions.PROJECT_DELETE) {
     return { tier: 4, roleName: 'Admin' };
   }
-  if (name.includes('manager') || (permissions & Permissions.PROJECT_EDIT) === Permissions.PROJECT_EDIT) {
+  if (
+    name.includes('manager') ||
+    (permissions & Permissions.PROJECT_EDIT) === Permissions.PROJECT_EDIT ||
+    (permissions & Permissions.AUTOMATION_MANAGE) === Permissions.AUTOMATION_MANAGE
+  ) {
     return { tier: 3, roleName: 'Manager' };
   }
   if (name.includes('team lead') || name.includes('lead') || (permissions & Permissions.SPRINT_MANAGE) === Permissions.SPRINT_MANAGE) {
