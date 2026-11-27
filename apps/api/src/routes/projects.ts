@@ -40,10 +40,21 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
     return status;
   }
 
-  // Helper to verify that a user holds the Manager role (Tier 3 / Manager)
+  // Helper to verify that a user holds the Manager role (matches GET /auth/users Manager bitmask)
   async function isUserProjectManager(userId: string): Promise<boolean> {
-    const tierInfo = await getUserRoleTier(userId);
-    return tierInfo.tier === 3 || tierInfo.roleName.toLowerCase() === 'manager';
+    const targetUser = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+      columns: { globalPermissions: true },
+    });
+    if (!targetUser) return false;
+    const perms = targetUser.globalPermissions;
+    const isSuperAdmin = (perms & Permissions.ORG_ADMIN) === Permissions.ORG_ADMIN;
+    const isAdmin = (perms & Permissions.PROJECT_DELETE) === Permissions.PROJECT_DELETE;
+    const isManager =
+      (perms & Permissions.AUTOMATION_MANAGE) === Permissions.AUTOMATION_MANAGE ||
+      (perms & Permissions.PROJECT_ADMIN) === Permissions.PROJECT_ADMIN ||
+      (perms & Permissions.PROJECT_EDIT) === Permissions.PROJECT_EDIT;
+    return !isSuperAdmin && !isAdmin && isManager;
   }
 
   // 1. Project Dashboard Metrics (Placed BEFORE /:key so it is not intercepted)
