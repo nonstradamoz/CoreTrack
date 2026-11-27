@@ -8,11 +8,13 @@ import {
   createTicketDependency,
   deleteTicketDependency,
   createTicket,
+  fetchCurrentUser,
   Ticket,
   TicketDependency,
 } from '../../lib/api';
 import { useProject } from '../../context/ProjectContext';
 import { useModuleAccess } from '../../hooks/useModuleAccess';
+import { usePermissions } from '../../hooks/usePermissions';
 import { AccessDenied } from '../../components/auth/AccessDenied';
 import { TicketDetailModal } from '../../components/kanban/TicketDetailModal';
 import { CreateTicketModal } from '../../components/kanban/CreateTicketModal';
@@ -35,12 +37,51 @@ export default function TimelinePage() {
   const queryClient = useQueryClient();
   const { projects, activeProject } = useProject();
   const { canAccess } = useModuleAccess();
+  const { isOrgAdmin, roleTier } = usePermissions();
+  const { data: currentUser } = useQuery({
+    queryKey: ['currentUser'],
+    queryFn: fetchCurrentUser,
+  });
+
+  const assignedProjects = useMemo(() => {
+    if (isOrgAdmin || roleTier >= 3) return projects;
+    const uid = currentUser?.id;
+    if (!uid) return [];
+    return projects.filter((p) => {
+      if (p.projectManagerId === uid || p.projectManager?.id === uid) return true;
+      if (p.reviewerId === uid || p.reviewer?.id === uid) return true;
+      if (
+        p.primaryTeam &&
+        (p.primaryTeam.lead?.id === uid ||
+          p.primaryTeam.members?.some((m) => m.userId === uid))
+      ) {
+        return true;
+      }
+      if (
+        p.assignedTeams?.some(
+          (t) =>
+            t.leadId === uid ||
+            t.lead?.id === uid ||
+            t.members?.some((m) => m.userId === uid)
+        )
+      ) {
+        return true;
+      }
+      return false;
+    });
+  }, [projects, currentUser?.id, isOrgAdmin, roleTier]);
+
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isDependencyModalOpen, setIsDependencyModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
-  const [projectScope, setProjectScope] = useState<string>(activeProject?.key || 'ALL');
+  const [projectScope, setProjectScope] = useState<string>('ALL');
+
+  const effectiveScope =
+    projectScope === 'ALL' || assignedProjects.some((p) => p.key === projectScope)
+      ? projectScope
+      : 'ALL';
 
   // Dependency Modal State
   const [sourceKey, setSourceKey] = useState('');
@@ -50,24 +91,31 @@ export default function TimelinePage() {
 
   // 1. Fetch tickets for selected project or all assigned projects
   const { data: tickets = [] } = useQuery({
-    queryKey: ['timelineTickets', projectScope, projects.map((p) => p.key).join(',')],
+    queryKey: ['timelineTickets', effectiveScope, assignedProjects.map((p) => p.key).join(',')],
     queryFn: async () => {
-      if (projectScope === 'ALL') {
-        if (projects.length === 0) return [];
-        const batches = await Promise.all(projects.map((p) => fetchTickets(p.key).catch(() => [])));
+      if (effectiveScope === 'ALL') {
+        if (assignedProjects.length === 0) return [];
+        const batches = await Promise.all(
+          assignedProjects.map((p) => fetchTickets(p.key).catch(() => []))
+        );
         return batches.flat();
       }
-      return fetchTickets(projectScope);
+      return fetchTickets(effectiveScope);
     },
-    enabled: projects.length > 0,
+    enabled: assignedProjects.length > 0,
   });
 
   // 2. Fetch dependencies
-  const depProjectKey = projectScope === 'ALL' ? activeProject?.key || projects[0]?.key || 'CORE' : projectScope;
+  const depProjectKey =
+    effectiveScope === 'ALL'
+      ? assignedProjects.find((p) => p.key === activeProject?.key)?.key ||
+        assignedProjects[0]?.key ||
+        ''
+      : effectiveScope;
   const { data: dependencies = [] } = useQuery({
     queryKey: ['dependencies', depProjectKey],
     queryFn: () => fetchProjectDependencies(depProjectKey),
-    enabled: projects.length > 0,
+    enabled: Boolean(depProjectKey),
   });
 
   // Mutations
@@ -153,7 +201,7 @@ export default function TimelinePage() {
     return conflictMap;
   }, [tickets, dependencies]);
 
-  if (!canAccess('timeline')) return <AccessDenied module="Timeline & Calendar" requiredRole="Team Lead or above" />;
+  if (!canAccess('timeline')) return <AccessDenied module="Timeline & Calendar" requiredRole="Project Viewer" />;
 
   return (
     <div className="flex-1 flex flex-col min-w-0">
@@ -170,14 +218,14 @@ export default function TimelinePage() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
-            {projects.length > 0 && (
+            {assignedProjects.length > 0 && (
               <select
-                value={projectScope}
+                value={effectiveScope}
                 onChange={(e) => setProjectScope(e.target.value)}
                 className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:border-blue-600 cursor-pointer"
               >
-                <option value="ALL">All Assigned Projects ({projects.length})</option>
-                {projects.map((p) => (
+                <option value="ALL">All Assigned Projects ({assignedProjects.length})</option>
+                {assignedProjects.map((p) => (
                   <option key={p.id} value={p.key}>
                     {p.name} ({p.key})
                   </option>

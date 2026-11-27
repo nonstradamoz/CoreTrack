@@ -49,6 +49,62 @@ export const API_URL = {
   },
 } as unknown as string;
 
+const AUTH_TOKEN_KEY = 'coretrack_auth_token';
+
+export function getAuthToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthToken(token: string) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(AUTH_TOKEN_KEY, token);
+  } catch {
+    // ignore
+  }
+}
+
+export function clearAuthToken() {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    localStorage.removeItem('coretrack_user_email');
+  } catch {
+    // ignore
+  }
+}
+
+// Attach per-browser Authorization Bearer JWT to all API requests
+if (typeof window !== 'undefined' && !(window as any).__coretrackFetchPatched) {
+  (window as any).__coretrackFetchPatched = true;
+  const originalFetch = window.fetch.bind(window);
+  window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const baseApi = getBaseApiUrl();
+    const isApiRequest =
+      url.startsWith('/api/v1/') || (baseApi ? url.startsWith(baseApi) : false);
+
+    if (isApiRequest) {
+      const token = getAuthToken();
+      if (token) {
+        const headers = new Headers(
+          init?.headers || (input instanceof Request ? input.headers : undefined)
+        );
+        if (!headers.has('Authorization')) {
+          headers.set('Authorization', `Bearer ${token}`);
+        }
+        return originalFetch(input, { ...init, headers });
+      }
+    }
+    return originalFetch(input, init);
+  };
+}
+
 export interface Ticket {
   id: string;
   projectId: string;
@@ -508,7 +564,7 @@ export async function deleteUser(id: string): Promise<void> {
   }
 }
 
-export async function switchUser(email: string): Promise<{ message: string; user: UserPersona | null }> {
+export async function switchUser(email: string): Promise<{ message: string; token?: string; user: UserPersona | null }> {
   const res = await fetch(`${API_URL}/api/v1/auth/switch-user`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -518,14 +574,15 @@ export async function switchUser(email: string): Promise<{ message: string; user
     const err = await res.json();
     throw new Error(err.message || 'Failed to switch user persona');
   }
+  const json = await res.json();
   if (typeof window !== 'undefined') {
     localStorage.setItem('coretrack_user_email', email);
+    if (json.data?.token) setAuthToken(json.data.token);
   }
-  const json = await res.json();
   return json.data;
 }
 
-export async function loginUser(email: string, password?: string): Promise<{ message: string; user: UserPersona }> {
+export async function loginUser(email: string, password?: string): Promise<{ message: string; token?: string; user: UserPersona }> {
   const res = await fetch(`${API_URL}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -539,17 +596,18 @@ export async function loginUser(email: string, password?: string): Promise<{ mes
     if (err.code) error.code = err.code;
     throw error;
   }
+  const json = await res.json();
   if (typeof window !== 'undefined') {
     localStorage.setItem('coretrack_user_email', email);
+    if (json.data?.token) setAuthToken(json.data.token);
   }
-  const json = await res.json();
   return json.data;
 }
 
 export async function setupInitialPassword(
   email: string,
   password: string
-): Promise<{ message: string; user: UserPersona }> {
+): Promise<{ message: string; token?: string; user: UserPersona }> {
   const res = await fetch(`${API_URL}/api/v1/auth/setup-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -559,10 +617,11 @@ export async function setupInitialPassword(
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || err.message || 'Failed to set password');
   }
+  const json = await res.json();
   if (typeof window !== 'undefined') {
     localStorage.setItem('coretrack_user_email', email);
+    if (json.data?.token) setAuthToken(json.data.token);
   }
-  const json = await res.json();
   return json.data;
 }
 
@@ -587,9 +646,7 @@ export async function logoutUser(): Promise<{ message: string }> {
   const res = await fetch(`${API_URL}/api/v1/auth/logout`, {
     method: 'POST',
   });
-  if (typeof window !== 'undefined') {
-    localStorage.removeItem('coretrack_user_email');
-  }
+  clearAuthToken();
   const json = await res.json();
   return json.data;
 }

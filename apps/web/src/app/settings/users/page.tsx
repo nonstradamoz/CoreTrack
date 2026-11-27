@@ -35,6 +35,8 @@ import {
   Check,
   Sparkles,
   Trash2,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 const ROLE_PRESETS = [
@@ -92,6 +94,9 @@ export default function UserManagementPage() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [designation, setDesignation] = useState('');
   const [role, setRole] = useState<'SUPER_ADMIN' | 'ADMIN' | 'MANAGER' | 'TEAM_LEAD' | 'EMPLOYEE'>('EMPLOYEE');
   const [userType, setUserType] = useState<'INTERNAL_EMPLOYEE' | 'EXTERNAL_GUEST'>('INTERNAL_EMPLOYEE');
@@ -150,6 +155,9 @@ export default function UserManagementPage() {
       setFullName('');
       setEmail('');
       setPassword('');
+      setConfirmPassword('');
+      setShowPassword(false);
+      setShowConfirmPassword(false);
       setDesignation('');
       setRole('EMPLOYEE');
       setUserType('INTERNAL_EMPLOYEE');
@@ -252,6 +260,13 @@ export default function UserManagementPage() {
       setFeedback({
         type: 'error',
         message: 'Initial password must be 8+ characters with an uppercase letter, lowercase letter, and number.',
+      });
+      return;
+    }
+    if (password !== confirmPassword) {
+      setFeedback({
+        type: 'error',
+        message: 'Passwords do not match. Please verify the entered password.',
       });
       return;
     }
@@ -845,18 +860,71 @@ export default function UserManagementPage() {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Initial Password <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="8+ chars, uppercase, lowercase, number"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Initial Password <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="8+ chars, A-Z, a-z, 0-9"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        required
+                        className="w-full pl-3.5 pr-9 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        title={showPassword ? 'Hide password' : 'View password'}
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                      Verify Password <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        placeholder="Re-enter password"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        required
+                        className={`w-full pl-3.5 pr-9 py-2 rounded-xl border bg-white dark:bg-slate-900 text-xs text-slate-900 dark:text-slate-100 placeholder-slate-400 focus:outline-none focus:ring-2 transition ${
+                          confirmPassword && confirmPassword !== password
+                            ? 'border-rose-400 focus:ring-rose-500'
+                            : confirmPassword && confirmPassword === password
+                              ? 'border-emerald-400 focus:ring-emerald-500'
+                              : 'border-slate-200 dark:border-slate-800 focus:ring-blue-500'
+                        }`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword((v) => !v)}
+                        className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                        title={showConfirmPassword ? 'Hide password' : 'View password'}
+                      >
+                        {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    {confirmPassword && (
+                      <p
+                        className={`text-[10px] mt-1 ${
+                          confirmPassword === password
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-rose-600 dark:text-rose-400'
+                        }`}
+                      >
+                        {confirmPassword === password ? 'Passwords match' : 'Passwords do not match'}
+                      </p>
+                    )}
+                  </div>
                 </div>
 
                 <div>

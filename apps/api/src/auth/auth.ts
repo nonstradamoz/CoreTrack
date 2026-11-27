@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { db, users, projects, projectMembers, roles, teams, teamMembers, eq, and } from '@coretrack/db';
 import { Permissions, hasPermission, StandardRoleBitmasks } from '@coretrack/shared';
+import { verifyAuthToken } from './jwt.js';
 
 export interface AuthUser {
   id: string;
@@ -10,33 +11,36 @@ export interface AuthUser {
   globalPermissions: bigint;
 }
 
-// In-memory active user session for local enterprise development / mock SSO
-let currentMockUserEmail: string | null = 'admin@coretrack.internal';
-
-export function setMockUserEmail(email: string | null) {
-  currentMockUserEmail = email;
+export function setMockUserEmail(_email: string | null) {
+  // Stateless JWT sessions are used; no global in-memory user state.
 }
 
 export function clearMockUserSession() {
-  currentMockUserEmail = null;
-}
-
-export function getMockUserEmail() {
-  return currentMockUserEmail;
+  // Stateless JWT sessions are cleared client-side on logout.
 }
 
 export async function getCurrentUser(request: FastifyRequest): Promise<AuthUser | null> {
-  // Support custom header 'x-user-email' or fallback to active session user
-  const emailHeader = request.headers['x-user-email'] as string | undefined;
-  const targetEmail = emailHeader || currentMockUserEmail;
+  const authHeader = request.headers.authorization;
+  let user = null;
 
-  if (!targetEmail) return null;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.slice(7).trim();
+    const payload = verifyAuthToken(token);
+    if (!payload) return null;
 
-  const user = await db.query.users.findFirst({
-    where: eq(users.email, targetEmail),
-  });
+    user = await db.query.users.findFirst({
+      where: eq(users.id, payload.sub),
+    });
+  } else {
+    const emailHeader = request.headers['x-user-email'] as string | undefined;
+    if (!emailHeader) return null;
 
-  if (!user) return null;
+    user = await db.query.users.findFirst({
+      where: eq(users.email, emailHeader.trim().toLowerCase()),
+    });
+  }
+
+  if (!user || (user.status && user.status !== 'ACTIVE')) return null;
 
   return {
     id: user.id,

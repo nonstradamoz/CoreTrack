@@ -133,7 +133,7 @@ export const MODULE_ACCESS: Record<string, bigint> = {
   dashboard:   Permissions.PROJECT_VIEW,
   board:       Permissions.PROJECT_VIEW,
   table:       Permissions.TICKET_BATCH_EDIT,
-  timeline:    Permissions.SPRINT_MANAGE,
+  timeline:    Permissions.PROJECT_VIEW,
   backlog:     Permissions.SPRINT_MANAGE,
   reports:     Permissions.PROJECT_VIEW,
   automation:  Permissions.AUTOMATION_MANAGE,

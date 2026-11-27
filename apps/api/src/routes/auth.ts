@@ -25,6 +25,7 @@ import {
   getUserRoleTier,
 } from '../auth/auth.js';
 import { hashPassword, verifyPassword, validatePasswordPolicy } from '../auth/password.js';
+import { signAuthToken } from '../auth/jwt.js';
 import { sendDirectOrBroadcastEmail, getAppUrl } from '../services/email.js';
 
 function escapeHtml(str: string): string {
@@ -458,19 +459,27 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const { email } = request.body;
-      setMockUserEmail(email);
+      const normalizedEmail = request.body.email.trim().toLowerCase();
+      const targetUser = await db.query.users.findFirst({
+        where: eq(users.email, normalizedEmail),
+      });
 
-      const user = await getCurrentUser(request);
+      if (!targetUser) {
+        return reply.status(404).send({ error: 'User not found' });
+      }
+
+      const token = signAuthToken({ sub: targetUser.id, email: targetUser.email });
       return reply.send({
         data: {
-          message: `Switched active session to ${email}`,
-          user: user
-            ? {
-                ...user,
-                globalPermissions: user.globalPermissions.toString(),
-              }
-            : null,
+          message: `Switched active session to ${targetUser.email}`,
+          token,
+          user: {
+            id: targetUser.id,
+            email: targetUser.email,
+            fullName: targetUser.fullName,
+            userType: targetUser.userType,
+            globalPermissions: targetUser.globalPermissions.toString(),
+          },
         },
       });
     }
@@ -522,12 +531,13 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
-      setMockUserEmail(user.email);
+      const token = signAuthToken({ sub: user.id, email: user.email });
       const roleInfo = getRoleFromPermissions(user.globalPermissions);
 
       return reply.send({
         data: {
           message: 'Login successful',
+          token,
           user: {
             id: user.id,
             email: user.email,
@@ -587,12 +597,13 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         .set({ passwordHash, mustChangePassword: false, updatedAt: new Date() })
         .where(eq(users.id, user.id));
 
-      setMockUserEmail(user.email);
+      const token = signAuthToken({ sub: user.id, email: user.email });
       const roleInfo = getRoleFromPermissions(user.globalPermissions);
 
       return reply.send({
         data: {
           message: 'Password set and signed in successfully',
+          token,
           user: {
             id: user.id,
             email: user.email,

@@ -396,7 +396,7 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
                 </Link>
               )}
 
-              {/* Calendar / Timeline — Team Lead+ (requires SPRINT_MANAGE) */}
+              {/* Calendar / Timeline — all users (scoped to assigned projects) */}
               {canAccess('timeline') && (
                 <Link
                   href="/timeline"
@@ -407,7 +407,7 @@ function AuthenticatedAppShell({ children }: { children: React.ReactNode }) {
                     }`}
                 >
                   <Calendar className={`h-4 w-4 shrink-0 ${activeNav === 'TIMELINE' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`} />
-                  {!isCollapsed && <span>Calender</span>}
+                  {!isCollapsed && <span>Calendar</span>}
                 </Link>
               )}
 
