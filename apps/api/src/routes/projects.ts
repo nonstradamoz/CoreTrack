@@ -57,6 +57,17 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
     return !isSuperAdmin && !isAdmin && isManager;
   }
 
+  function isProjectVisibleToCaller(
+    project: { adminVisibleTo?: unknown },
+    callerId: string,
+    callerTier: number
+  ): boolean {
+    if (callerTier !== 4) return true;
+    const allowed = project.adminVisibleTo;
+    if (!Array.isArray(allowed) || allowed.length === 0) return true;
+    return allowed.includes(callerId);
+  }
+
   // 1. Project Dashboard Metrics (Placed BEFORE /:key so it is not intercepted)
   app.get(
     '/dashboard/metrics',
@@ -66,8 +77,11 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ['Projects'],
       },
     },
-    async (_request, reply) => {
-      const allProjects = await db.query.projects.findMany({
+    async (request, reply) => {
+      const caller = await getCurrentUser(request);
+      const callerTierInfo = caller ? await getUserRoleTier(caller.id) : null;
+
+      const rawProjects = await db.query.projects.findMany({
         with: {
           tickets: {
             columns: {
@@ -78,6 +92,11 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           department: true,
         },
       });
+
+      const allProjects =
+        caller && callerTierInfo
+          ? rawProjects.filter((p) => isProjectVisibleToCaller(p, caller.id, callerTierInfo.tier))
+          : rawProjects;
 
       let totalProjects = allProjects.length;
       let activeProjects = 0;
@@ -158,8 +177,11 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         tags: ['Projects'],
       },
     },
-    async (_request, reply) => {
-      const allProjects = await db.query.projects.findMany({
+    async (request, reply) => {
+      const caller = await getCurrentUser(request);
+      const callerTierInfo = caller ? await getUserRoleTier(caller.id) : null;
+
+      const rawProjects = await db.query.projects.findMany({
         with: {
           department: true,
           primaryTeam: {
@@ -224,6 +246,11 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         },
         orderBy: (projects, { asc }) => [asc(projects.name)],
       });
+
+      const allProjects =
+        caller && callerTierInfo
+          ? rawProjects.filter((p) => isProjectVisibleToCaller(p, caller.id, callerTierInfo.tier))
+          : rawProjects;
 
       const enriched = allProjects.map((p) => {
         const totalTicketsCount = p.tickets.length;
@@ -339,6 +366,26 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           },
           milestones: {
             orderBy: (milestones, { asc }) => [asc(milestones.dueDate)],
+            with: {
+              tasks: {
+                columns: {
+                  id: true,
+                  ticketKey: true,
+                  title: true,
+                  status: true,
+                  priority: true,
+                  assigneeId: true,
+                },
+                with: {
+                  assignee: {
+                    columns: {
+                      id: true,
+                      fullName: true,
+                    },
+                  },
+                },
+              },
+            },
           },
           activityLogs: {
             with: {
@@ -393,6 +440,15 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'Project not found' });
       }
 
+      const caller = await getCurrentUser(request);
+      const callerTierInfo = caller ? await getUserRoleTier(caller.id, key) : null;
+      if (caller && callerTierInfo && !isProjectVisibleToCaller(project, caller.id, callerTierInfo.tier)) {
+        return reply.status(403).send({
+          error: 'FORBIDDEN',
+          message: 'You do not have access to view this project.',
+        });
+      }
+
       // Build unified assignedTeams list (M2M projectTeams + backwards-compat primaryTeam)
       const resolvedAssignedTeams = project.assignedTeams.map((at) => at.team);
       if (project.primaryTeam && !resolvedAssignedTeams.some((t) => t.id === project.primaryTeam!.id)) {
@@ -401,9 +457,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
 
       // Team task isolation: non-manager/non-admin users only see their own team(s)' tasks (or untagged tasks)
       let visibleTickets = project.tickets;
-      const caller = await getCurrentUser(request);
-      if (caller) {
-        const callerTierInfo = await getUserRoleTier(caller.id, key);
+      if (caller && callerTierInfo) {
         const isProjectAuthority =
           callerTierInfo.tier >= 3 ||
           project.projectManagerId === caller.id ||
@@ -531,6 +585,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           deadline: z.string().datetime().optional().nullable(),
           projectManagerId: z.string().uuid().optional().nullable(),
           reviewerId: z.string().uuid().optional().nullable(),
+          adminVisibleTo: z.array(z.string().uuid()).optional(),
         }),
       },
     },
@@ -568,6 +623,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         deadline,
         projectManagerId,
         reviewerId,
+        adminVisibleTo,
       } = request.body;
 
       // Check key uniqueness
@@ -643,6 +699,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           deadlineSetByRoleTier: deadline ? callerTierInfo.tier : 1,
           projectManagerId: resolvedPmId,
           reviewerId: resolvedReviewerId,
+          adminVisibleTo: callerTierInfo.tier >= 5 && Array.isArray(adminVisibleTo) ? adminVisibleTo : [],
         })
         .returning();
 
@@ -731,6 +788,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           reviewerId: z.string().uuid().optional().nullable(),
           primaryTeamId: z.string().uuid().optional(),
           archived: z.boolean().optional(),
+          adminVisibleTo: z.array(z.string().uuid()).optional(),
         }),
       },
     },
@@ -852,6 +910,19 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       if (updates.archived !== undefined) {
         updateData.archived = updates.archived;
         auditChanges.push(updates.archived ? 'Archived project' : 'Unarchived project');
+      }
+      if (updates.adminVisibleTo !== undefined) {
+        if (callerTierInfo.tier < 5) {
+          return reply.status(403).send({
+            type: 'https://errors.coretrack.internal/forbidden',
+            title: 'Access Denied',
+            status: 403,
+            error: 'FORBIDDEN',
+            message: 'Only Super Admins can configure per-admin project visibility.',
+          });
+        }
+        updateData.adminVisibleTo = updates.adminVisibleTo;
+        auditChanges.push('Updated Admin visibility permissions');
       }
 
       const [updated] = await db
@@ -1307,6 +1378,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           description: z.string().optional(),
           dueDate: z.string().datetime().optional().nullable(),
           status: z.enum(['PENDING', 'IN_PROGRESS', 'COMPLETED']).default('PENDING'),
+          taskIds: z.array(z.string().uuid()).optional(),
         }),
       },
     },
@@ -1331,7 +1403,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!targetProject) return reply.status(404).send({ error: 'Project not found' });
 
-      const { title, description, dueDate, status } = request.body;
+      const { title, description, dueDate, status, taskIds } = request.body;
 
       const [newMilestone] = await db
         .insert(projectMilestones)
@@ -1343,6 +1415,39 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           status,
         })
         .returning();
+
+      if (taskIds && taskIds.length > 0) {
+        await db
+          .update(tickets)
+          .set({ milestoneId: newMilestone.id, updatedAt: new Date() })
+          .where(and(eq(tickets.projectId, targetProject.id), inArray(tickets.id, taskIds)));
+
+        const linkedTasks = await db.query.tickets.findMany({
+          where: eq(tickets.milestoneId, newMilestone.id),
+          columns: { id: true, status: true },
+        });
+        if (linkedTasks.length > 0) {
+          const allDone = linkedTasks.every((t) =>
+            ['DONE', 'RESOLVED', 'CLOSED'].includes(t.status.toUpperCase())
+          );
+          const anyActive = linkedTasks.some((t) =>
+            ['IN_PROGRESS', 'IN_REVIEW', 'PENDING_APPROVAL'].includes(t.status.toUpperCase())
+          );
+          if (allDone) {
+            await db
+              .update(projectMilestones)
+              .set({ status: 'COMPLETED', updatedAt: new Date() })
+              .where(eq(projectMilestones.id, newMilestone.id));
+            newMilestone.status = 'COMPLETED';
+          } else if (anyActive && newMilestone.status === 'PENDING') {
+            await db
+              .update(projectMilestones)
+              .set({ status: 'IN_PROGRESS', updatedAt: new Date() })
+              .where(eq(projectMilestones.id, newMilestone.id));
+            newMilestone.status = 'IN_PROGRESS';
+          }
+        }
+      }
 
       await db.insert(projectActivityLogs).values({
         projectId: targetProject.id,
@@ -1371,6 +1476,7 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
           description: z.string().optional(),
           dueDate: z.string().datetime().optional().nullable(),
           status: z.enum(['PENDING', 'IN_PROGRESS', 'COMPLETED']).optional(),
+          taskIds: z.array(z.string().uuid()).optional(),
         }),
       },
     },
@@ -1400,6 +1506,46 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         .returning();
 
       if (!updatedMilestone) return reply.status(404).send({ error: 'Milestone not found' });
+
+      if (updates.taskIds !== undefined) {
+        await db
+          .update(tickets)
+          .set({ milestoneId: null, updatedAt: new Date() })
+          .where(and(eq(tickets.projectId, targetProject.id), eq(tickets.milestoneId, id)));
+
+        if (updates.taskIds.length > 0) {
+          await db
+            .update(tickets)
+            .set({ milestoneId: id, updatedAt: new Date() })
+            .where(and(eq(tickets.projectId, targetProject.id), inArray(tickets.id, updates.taskIds)));
+
+          const linkedTasks = await db.query.tickets.findMany({
+            where: eq(tickets.milestoneId, id),
+            columns: { id: true, status: true },
+          });
+          if (linkedTasks.length > 0) {
+            const allDone = linkedTasks.every((t) =>
+              ['DONE', 'RESOLVED', 'CLOSED'].includes(t.status.toUpperCase())
+            );
+            const anyActive = linkedTasks.some((t) =>
+              ['IN_PROGRESS', 'IN_REVIEW', 'PENDING_APPROVAL'].includes(t.status.toUpperCase())
+            );
+            if (allDone && updatedMilestone.status !== 'COMPLETED') {
+              await db
+                .update(projectMilestones)
+                .set({ status: 'COMPLETED', updatedAt: new Date() })
+                .where(eq(projectMilestones.id, id));
+              updatedMilestone.status = 'COMPLETED';
+            } else if (!allDone && anyActive && updatedMilestone.status === 'PENDING') {
+              await db
+                .update(projectMilestones)
+                .set({ status: 'IN_PROGRESS', updatedAt: new Date() })
+                .where(eq(projectMilestones.id, id));
+              updatedMilestone.status = 'IN_PROGRESS';
+            }
+          }
+        }
+      }
 
       if (updates.status === 'COMPLETED') {
         await db.insert(projectActivityLogs).values({

@@ -329,21 +329,36 @@ export default function PortfolioDashboardPage() {
                     </div>
                   </div>
 
-                  {/* Bottom Row: Avatar Cluster & Due Date */}
-                  <div className="flex items-center justify-between z-10 pt-1">
-                    <div className="flex items-center -space-x-2">
-                      <div className="h-6 w-6 rounded-full bg-white/90 text-slate-900 text-[10px] font-bold flex items-center justify-center border-2 border-white shadow-xs">
-                        JM
+                  {/* Bottom Row: Manager, Reviewer, Teams/Members & Due Date */}
+                  <div className="flex items-center justify-between gap-2 z-10 pt-1">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <div className="flex items-center -space-x-1.5 shrink-0">
+                        <div
+                          title={`Manager: ${fullProj?.projectManager?.fullName || 'Unassigned'}`}
+                          className="h-6 w-6 rounded-full bg-white/95 text-slate-900 text-[10px] font-bold flex items-center justify-center border-2 border-white shadow-xs"
+                        >
+                          {fullProj?.projectManager?.fullName
+                            ? fullProj.projectManager.fullName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+                            : 'PM'}
+                        </div>
+                        {fullProj?.reviewer && (
+                          <div
+                            title={`Reviewer: ${fullProj.reviewer.fullName}`}
+                            className="h-6 w-6 rounded-full bg-slate-900 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white shadow-xs"
+                          >
+                            {fullProj.reviewer.fullName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                          </div>
+                        )}
                       </div>
-                      <div className="h-6 w-6 rounded-full bg-slate-900 text-white text-[10px] font-bold flex items-center justify-center border-2 border-white shadow-xs">
-                        AK
-                      </div>
-                      <div className="h-6 w-6 rounded-full bg-white/30 text-white text-[9px] font-bold flex items-center justify-center border-2 border-white backdrop-blur-xs">
-                        +1
-                      </div>
+                      <span
+                        title={`${fullProj?.assignedTeams?.length ?? 0} team(s) · ${fullProj?.memberCount ?? 0} member(s)`}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-semibold truncate ${theme.pill} backdrop-blur-xs`}
+                      >
+                        {fullProj?.assignedTeams?.length ?? 0}T · {fullProj?.memberCount ?? 0}M
+                      </span>
                     </div>
 
-                    <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium ${theme.pill} backdrop-blur-xs`}>
+                    <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium shrink-0 ${theme.pill} backdrop-blur-xs`}>
                       <Calendar className="h-3 w-3" />
                       <span>{deadlineLabel}</span>
                     </div>

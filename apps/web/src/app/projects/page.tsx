@@ -424,17 +424,26 @@ export default function ProjectsPage() {
                       </div>
 
                       {/* Reviewer */}
-                      {p.reviewer && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-slate-400">Reviewer</span>
-                          <div className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300">
-                            <div className="h-5 w-5 rounded-full bg-slate-700 text-[10px] font-bold text-white flex items-center justify-center">
-                              {p.reviewer.fullName[0]}
-                            </div>
-                            <span>{p.reviewer.fullName}</span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Reviewer</span>
+                        <div className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300">
+                          <div className="h-5 w-5 rounded-full bg-slate-700 text-[10px] font-bold text-white flex items-center justify-center">
+                            {p.reviewer?.fullName ? p.reviewer.fullName[0] : 'R'}
                           </div>
+                          <span>{p.reviewer?.fullName || 'Unassigned'}</span>
                         </div>
-                      )}
+                      </div>
+
+                      {/* Assigned Teams & Members */}
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Assigned</span>
+                        <div className="flex items-center gap-1.5 font-medium text-slate-700 dark:text-slate-300">
+                          <Users className="h-3.5 w-3.5 text-slate-400" />
+                          <span>
+                            {p.assignedTeams?.length ?? 0} {(p.assignedTeams?.length ?? 0) === 1 ? 'Team' : 'Teams'} · {p.memberCount ?? 0} {(p.memberCount ?? 0) === 1 ? 'Member' : 'Members'}
+                          </span>
+                        </div>
+                      </div>
 
                       {/* Deadline */}
                       <div className="flex items-center justify-between">
@@ -576,6 +585,10 @@ function EditProjectModal({
   availableUsers: any[];
   onSuccess: () => void;
 }) {
+  const { isOrgAdmin, roleTier } = usePermissions();
+  const isSuperAdmin = isOrgAdmin || roleTier >= 5;
+  const adminUsers = availableUsers.filter((u) => u.roleTier === 4);
+
   const [name, setName] = useState(project.name);
   const [description, setDescription] = useState(project.description || '');
   const [projectManagerId, setProjectManagerId] = useState(project.projectManagerId || '');
@@ -588,6 +601,7 @@ function EditProjectModal({
     project.deadline ? new Date(project.deadline).toISOString().split('T')[0] : ''
   );
   const [archived, setArchived] = useState(!!project.archived);
+  const [adminVisibleTo, setAdminVisibleTo] = useState<string[]>(project.adminVisibleTo || []);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -606,6 +620,7 @@ function EditProjectModal({
         startDate: startDate ? new Date(startDate).toISOString() : null,
         deadline: deadline ? new Date(deadline).toISOString() : null,
         archived,
+        ...(isSuperAdmin ? { adminVisibleTo } : {}),
       });
       onSuccess();
     } catch (err: any) {
@@ -753,6 +768,46 @@ function EditProjectModal({
               Archive Project (Hide from active views)
             </label>
           </div>
+
+          {isSuperAdmin && adminUsers.length > 0 && (
+            <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/60 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 dark:text-slate-300">
+                  <ShieldCheck className="h-3.5 w-3.5 text-indigo-500" />
+                  Admin Visibility
+                </span>
+                <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                  {adminVisibleTo.length === 0 ? 'All Admins' : `${adminVisibleTo.length} selected`}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Leave unchecked to allow all Admins, or select specific Admins who can view this project.
+              </p>
+              <div className="grid grid-cols-2 gap-1.5 max-h-28 overflow-y-auto pt-1">
+                {adminUsers.map((u) => {
+                  const checked = adminVisibleTo.includes(u.id);
+                  return (
+                    <label
+                      key={u.id}
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs text-slate-700 dark:text-slate-300 cursor-pointer hover:border-indigo-400"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) => {
+                          setAdminVisibleTo((prev) =>
+                            e.target.checked ? [...prev, u.id] : prev.filter((id) => id !== u.id)
+                          );
+                        }}
+                        className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span className="truncate">{u.fullName}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
             <button

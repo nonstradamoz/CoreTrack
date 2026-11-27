@@ -71,6 +71,7 @@ export default function ProjectDetailPage() {
     (urlTab as any) || 'OVERVIEW'
   );
   const [isAddMilestoneOpen, setIsAddMilestoneOpen] = useState(false);
+  const [assigningMilestone, setAssigningMilestone] = useState<any | null>(null);
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isAssignTeamsOpen, setIsAssignTeamsOpen] = useState(false);
@@ -718,10 +719,39 @@ export default function ProjectDetailPage() {
                             <RichTextContent content={m.description} />
                           </div>
                         )}
+                        {m.tasks && m.tasks.length > 0 && (
+                          <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                            {m.tasks.map((t: any) => {
+                              const taskDone = ['DONE', 'RESOLVED', 'CLOSED'].includes(t.status.toUpperCase());
+                              return (
+                                <span
+                                  key={t.id}
+                                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium border ${
+                                    taskDone
+                                      ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300 line-through'
+                                      : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                                  }`}
+                                >
+                                  <span className="font-mono font-bold">{t.ticketKey}</span>
+                                  <span className="truncate max-w-[140px]">{t.title}</span>
+                                </span>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     <div className="flex items-center gap-3 self-end sm:self-center shrink-0">
+                      {canManageProject && (
+                        <button
+                          type="button"
+                          onClick={() => setAssigningMilestone(m)}
+                          className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-[10px] font-semibold text-slate-700 dark:text-slate-300 transition cursor-pointer"
+                        >
+                          Assign Tasks ({m.tasks?.length || 0})
+                        </button>
+                      )}
                       {/* Status pill */}
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -1031,9 +1061,24 @@ export default function ProjectDetailPage() {
           isOpen={isAddMilestoneOpen}
           onClose={() => setIsAddMilestoneOpen(false)}
           projectKey={project.key}
+          projectTickets={project.tickets || []}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['project', projectKey] });
             setIsAddMilestoneOpen(false);
+          }}
+        />
+      )}
+
+      {/* ASSIGN MILESTONE TASKS MODAL */}
+      {assigningMilestone && (
+        <AssignMilestoneTasksModal
+          milestone={assigningMilestone}
+          projectKey={project.key}
+          projectTickets={project.tickets || []}
+          onClose={() => setAssigningMilestone(null)}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['project', projectKey] });
+            setAssigningMilestone(null);
           }}
         />
       )}
@@ -1513,18 +1558,27 @@ function AddMilestoneModal({
   isOpen,
   onClose,
   projectKey,
+  projectTickets,
   onSuccess,
 }: {
   isOpen: boolean;
   onClose: () => void;
   projectKey: string;
+  projectTickets: any[];
   onSuccess: () => void;
 }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [status, setStatus] = useState('PENDING');
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const toggleTask = (id: string) => {
+    setSelectedTaskIds((prev) =>
+      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+    );
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1536,6 +1590,7 @@ function AddMilestoneModal({
         description: description.trim() || undefined,
         dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
         status,
+        taskIds: selectedTaskIds.length > 0 ? selectedTaskIds : undefined,
       });
       onSuccess();
     } finally {
@@ -1594,6 +1649,32 @@ function AddMilestoneModal({
             </div>
           </div>
 
+          {projectTickets.length > 0 && (
+            <div>
+              <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Assign Tasks (auto-completes milestone when all assigned tasks finish)
+              </label>
+              <div className="max-h-36 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
+                {projectTickets.map((t: any) => (
+                  <label
+                    key={t.id}
+                    className="flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedTaskIds.includes(t.id)}
+                      onChange={() => toggleTask(t.id)}
+                      className="rounded border-slate-300 text-blue-600"
+                    />
+                    <span className="font-mono font-bold text-slate-500">{t.ticketKey}</span>
+                    <span className="truncate flex-1 text-slate-800 dark:text-slate-200">{t.title}</span>
+                    <span className="text-[10px] text-slate-400">{t.status}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
             <button
               type="button"
@@ -1611,6 +1692,97 @@ function AddMilestoneModal({
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function AssignMilestoneTasksModal({
+  milestone,
+  projectKey,
+  projectTickets,
+  onClose,
+  onSuccess,
+}: {
+  milestone: any;
+  projectKey: string;
+  projectTickets: any[];
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>(
+    (milestone.tasks || []).map((t: any) => t.id)
+  );
+  const [isSaving, setIsSaving] = useState(false);
+
+  const toggleTask = (id: string) => {
+    setSelectedTaskIds((prev) =>
+      prev.includes(id) ? prev.filter((t) => t !== id) : [...prev, id]
+    );
+  };
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await updateMilestone(projectKey, milestone.id, { taskIds: selectedTaskIds });
+      onSuccess();
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-xl space-y-4">
+        <div>
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+            Assign Tasks to &ldquo;{milestone.title}&rdquo;
+          </h3>
+          <p className="text-[11px] text-slate-400 mt-0.5">
+            Milestone automatically marks Completed when all assigned tasks are finished.
+          </p>
+        </div>
+
+        <div className="max-h-64 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-800 divide-y divide-slate-100 dark:divide-slate-800">
+          {projectTickets.length === 0 ? (
+            <div className="p-4 text-center text-xs text-slate-400">No tasks in this project yet.</div>
+          ) : (
+            projectTickets.map((t: any) => (
+              <label
+                key={t.id}
+                className="flex items-center gap-2 px-3 py-2 text-xs hover:bg-slate-50 dark:hover:bg-slate-800/60 cursor-pointer"
+              >
+                <input
+                  type="checkbox"
+                  checked={selectedTaskIds.includes(t.id)}
+                  onChange={() => toggleTask(t.id)}
+                  className="rounded border-slate-300 text-blue-600"
+                />
+                <span className="font-mono font-bold text-slate-500">{t.ticketKey}</span>
+                <span className="truncate flex-1 text-slate-800 dark:text-slate-200">{t.title}</span>
+                <span className="text-[10px] text-slate-400">{t.status}</span>
+              </label>
+            ))
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-500"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={handleSave}
+            className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-xs cursor-pointer"
+          >
+            {isSaving ? 'Saving...' : 'Save Assignments'}
+          </button>
+        </div>
       </div>
     </div>
   );

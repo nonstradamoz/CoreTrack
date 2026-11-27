@@ -5,6 +5,8 @@ import {
   db,
   tickets,
   projects,
+  projectMilestones,
+  projectActivityLogs,
   projectTeams,
   sprints,
   ticketComments,
@@ -109,6 +111,45 @@ function attachDisplayKeys<
 export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
+  async function syncMilestoneStatus(milestoneId: string | null | undefined, actorUserId?: string) {
+    if (!milestoneId) return;
+    const milestone = await db.query.projectMilestones.findFirst({
+      where: eq(projectMilestones.id, milestoneId),
+    });
+    if (!milestone) return;
+
+    const linkedTasks = await db.query.tickets.findMany({
+      where: eq(tickets.milestoneId, milestoneId),
+      columns: { id: true, status: true },
+    });
+    if (linkedTasks.length === 0) return;
+
+    const allDone = linkedTasks.every((t) =>
+      ['DONE', 'RESOLVED', 'CLOSED'].includes(t.status.toUpperCase())
+    );
+    const anyActive = linkedTasks.some((t) =>
+      ['IN_PROGRESS', 'IN_REVIEW', 'PENDING_APPROVAL'].includes(t.status.toUpperCase())
+    );
+
+    if (allDone && milestone.status !== 'COMPLETED') {
+      await db
+        .update(projectMilestones)
+        .set({ status: 'COMPLETED', updatedAt: new Date() })
+        .where(eq(projectMilestones.id, milestoneId));
+      await db.insert(projectActivityLogs).values({
+        projectId: milestone.projectId,
+        userId: actorUserId || null,
+        action: 'MILESTONE_COMPLETED',
+        details: `Milestone "${milestone.title}" was automatically completed after all linked tasks finished.`,
+      });
+    } else if (!allDone && anyActive && milestone.status === 'PENDING') {
+      await db
+        .update(projectMilestones)
+        .set({ status: 'IN_PROGRESS', updatedAt: new Date() })
+        .where(eq(projectMilestones.id, milestoneId));
+    }
+  }
+
   // 1. List Tickets
   app.get(
     '/',
@@ -155,23 +196,31 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
 
-      // Team task isolation: non-manager/non-admin users only see their own team(s)' tasks (or untagged tasks)
+      // Visibility & Team task isolation:
+      // - adminOnly tasks are visible only to Admins & Super Admins (tier >= 4)
+      // - non-manager/non-admin users only see their own team(s)' tasks (or untagged tasks)
       const caller = await getCurrentUser(request);
       if (caller) {
         const callerTierInfo = await getUserRoleTier(caller.id, targetProject?.key || projectKey);
+        const isAdminOrSuperAdmin = callerTierInfo.tier >= 4;
         const isProjectAuthority =
           callerTierInfo.tier >= 3 ||
           (targetProject &&
             (targetProject.projectManagerId === caller.id || targetProject.reviewerId === caller.id));
 
+        const visibleResults = isAdminOrSuperAdmin ? results : results.filter((t) => !t.adminOnly);
+
         if (!isProjectAuthority) {
           const userTeamIds = await getUserTeamIds(caller.id);
-          const filtered = results.filter((t) => !t.teamId || userTeamIds.includes(t.teamId));
+          const filtered = visibleResults.filter((t) => !t.teamId || userTeamIds.includes(t.teamId));
           return reply.send({ data: attachDisplayKeys(filtered, targetProject?.key || projectKey) });
         }
+
+        return reply.send({ data: attachDisplayKeys(visibleResults, targetProject?.key || projectKey) });
       }
 
-      return reply.send({ data: attachDisplayKeys(results, targetProject?.key || projectKey) });
+      const publicResults = results.filter((t) => !t.adminOnly);
+      return reply.send({ data: attachDisplayKeys(publicResults, targetProject?.key || projectKey) });
     }
   );
 
@@ -216,21 +265,28 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'Ticket not found' });
       }
 
-      if (ticket.teamId) {
-        const caller = await getCurrentUser(request);
-        if (caller) {
-          const callerTierInfo = await getUserRoleTier(caller.id, ticket.project?.key);
-          const isProjectAuthority =
-            callerTierInfo.tier >= 3 ||
-            ticket.project?.projectManagerId === caller.id ||
-            ticket.project?.reviewerId === caller.id;
-          if (!isProjectAuthority) {
-            const userTeamIds = await getUserTeamIds(caller.id);
-            if (!userTeamIds.includes(ticket.teamId)) {
-              return reply.status(403).send({
-                error: 'Access Denied: This task belongs to another team.',
-              });
-            }
+      const caller = await getCurrentUser(request);
+      const callerTierInfo = caller
+        ? await getUserRoleTier(caller.id, ticket.project?.key)
+        : { tier: 0, roleName: 'Guest' };
+
+      if (ticket.adminOnly && callerTierInfo.tier < 4) {
+        return reply.status(403).send({
+          error: 'Access Denied: This task is restricted to Admins and Super Admins.',
+        });
+      }
+
+      if (ticket.teamId && caller) {
+        const isProjectAuthority =
+          callerTierInfo.tier >= 3 ||
+          ticket.project?.projectManagerId === caller.id ||
+          ticket.project?.reviewerId === caller.id;
+        if (!isProjectAuthority) {
+          const userTeamIds = await getUserTeamIds(caller.id);
+          if (!userTeamIds.includes(ticket.teamId)) {
+            return reply.status(403).send({
+              error: 'Access Denied: This task belongs to another team.',
+            });
           }
         }
       }
@@ -318,6 +374,8 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      const isAdminOnly = callerTierInfo.tier >= 5 ? Boolean(input.adminOnly) : false;
+
       const [newTicket] = await db
         .insert(tickets)
         .values({
@@ -332,6 +390,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
           status: input.status,
           parentId: input.parentId,
           sprintId: input.sprintId,
+          milestoneId: input.milestoneId ?? null,
           assigneeId: input.assigneeId,
           assignedByUserId: input.assigneeId ? (user?.id || null) : null,
           assignedByRoleTier: input.assigneeId ? callerTierInfo.tier : 1,
@@ -343,6 +402,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
           slaResponseDueAt: responseDueAt,
           slaResolutionDueAt: resolutionDueAt,
           isSlaPaused: false,
+          adminOnly: isAdminOnly,
           customFields: input.customFields,
           reporterId,
         })
@@ -377,6 +437,10 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
           .set({ status: 'IN_PROGRESS', updatedAt: new Date() })
           .where(and(eq(projects.id, input.projectId), eq(projects.status, 'NOT_STARTED')));
         console.info(`[Project] Auto-advanced project '${projectKey}' to IN_PROGRESS on task assignment`);
+      }
+
+      if (input.milestoneId) {
+        await syncMilestoneStatus(input.milestoneId, user?.id);
       }
 
       // Broadcast to all connected clients on this project
@@ -478,6 +542,18 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
       const callerTierInfo = user
         ? await getUserRoleTier(user.id, projectKey)
         : { tier: 5, roleName: 'Super Admin' };
+
+      if (existing.adminOnly && callerTierInfo.tier < 4) {
+        return reply.status(403).send({
+          error: 'Access Denied: This task is restricted to Admins and Super Admins.',
+        });
+      }
+
+      if (updates.adminOnly !== undefined && callerTierInfo.tier < 5) {
+        return reply.status(403).send({
+          error: 'Access Denied: Only Super Admins can change admin-only visibility.',
+        });
+      }
 
       // Assignment Authority & Task Editing Guard:
       // Regular employees (Tier 1) can only edit, change status, priority, or deadline on tasks assigned to themselves.
@@ -633,6 +709,14 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
         type: 'TICKET_UPDATED',
         payload: hydratedUpdatedTicket,
       });
+
+      // Auto-sync linked milestone status when task status or milestone assignment changes
+      if (updates.status !== undefined || updates.milestoneId !== undefined) {
+        await syncMilestoneStatus(rawUpdatedTicket.milestoneId, user?.id);
+        if (existing.milestoneId && existing.milestoneId !== rawUpdatedTicket.milestoneId) {
+          await syncMilestoneStatus(existing.milestoneId, user?.id);
+        }
+      }
 
       // Notification Email: If task assignee changed or newly assigned, dispatch email
       if (updates.assigneeId && updates.assigneeId !== existing.assigneeId) {
@@ -896,6 +980,13 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
               .execute()
           )
         ).catch(() => {});
+      }
+
+      if (status !== undefined) {
+        const affectedMilestoneIds = [
+          ...new Set(updatedTickets.map((t) => t.milestoneId).filter((id): id is string => Boolean(id))),
+        ];
+        await Promise.all(affectedMilestoneIds.map((mid) => syncMilestoneStatus(mid, user?.id))).catch(() => {});
       }
 
       return reply.send({

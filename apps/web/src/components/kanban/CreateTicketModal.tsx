@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, Plus, AlertCircle, User, Calendar, Sparkles, Users } from 'lucide-react';
+import { X, Plus, AlertCircle, User, Calendar, Sparkles, Users, ShieldCheck } from 'lucide-react';
 import { Ticket, UserPersona, Team, fetchAvailableUsers, fetchTeams, fetchProjects, fetchCurrentUser } from '../../lib/api';
 import { RichTextEditor } from '../ui/RichText';
 import { usePermissions } from '../../hooks/usePermissions';
@@ -23,6 +23,7 @@ interface CreateTicketModalProps {
     storyPoints?: number;
     assigneeId?: string;
     dueDate?: string;
+    adminOnly?: boolean;
   }) => Promise<void>;
 }
 
@@ -33,8 +34,9 @@ export function CreateTicketModal({
   onClose,
   onSubmit,
 }: CreateTicketModalProps) {
-  const { hasPermission, roleTier } = usePermissions();
+  const { hasPermission, isOrgAdmin, roleTier } = usePermissions();
   const canCreateTask = hasPermission(Permissions.TICKET_CREATE);
+  const isSuperAdmin = isOrgAdmin || roleTier >= 5;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [ticketType, setTicketType] = useState<Ticket['ticketType']>('TASK');
@@ -44,6 +46,7 @@ export function CreateTicketModal({
   const [assigneeId, setAssigneeId] = useState('');
   const [teamId, setTeamId] = useState(defaultTeamId || '');
   const [dueDate, setDueDate] = useState('');
+  const [adminOnly, setAdminOnly] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<UserPersona[]>([]);
   const [projectTeamsList, setProjectTeamsList] = useState<Team[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -118,6 +121,7 @@ export function CreateTicketModal({
         storyPoints: storyPoints === '' ? undefined : Number(storyPoints),
         assigneeId: assigneeId || undefined,
         dueDate: dueDate ? new Date(dueDate).toISOString() : undefined,
+        adminOnly: isSuperAdmin ? adminOnly : undefined,
       });
       onClose();
     } catch (err: unknown) {
@@ -345,6 +349,26 @@ export function CreateTicketModal({
               minHeight="110px"
             />
           </div>
+
+          {isSuperAdmin && (
+            <label className="flex items-start gap-2.5 p-3 rounded-xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/70 dark:bg-purple-950/30 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={adminOnly}
+                onChange={(e) => setAdminOnly(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-purple-300 text-purple-600 focus:ring-purple-500"
+              />
+              <div className="text-xs">
+                <div className="font-semibold text-purple-900 dark:text-purple-200 flex items-center gap-1.5">
+                  <ShieldCheck className="h-3.5 w-3.5 text-purple-600 dark:text-purple-400" />
+                  <span>Visible to Admins &amp; Super Admins only</span>
+                </div>
+                <p className="text-[11px] text-purple-700/80 dark:text-purple-300/80 mt-0.5">
+                  Hide this task from Managers, Team Leads, and Employees across boards, tables, and search.
+                </p>
+              </div>
+            </label>
+          )}
 
           {/* Footer Actions */}
           <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100 dark:border-slate-800">

@@ -89,6 +89,8 @@ export const projects = pgTable('projects', {
   reviewerId: uuid('reviewer_id').references(() => users.id, { onDelete: 'set null' }),
   archived: boolean('archived').default(false).notNull(),
   nextTicketNumber: integer('next_ticket_number').default(1).notNull(),
+  // Per-project admin visibility: empty array = all admins can see; non-empty = only listed admin IDs (+ super admins)
+  adminVisibleTo: jsonb('admin_visible_to').$type<string[]>().default([]).notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
 });
@@ -154,6 +156,7 @@ export const tickets = pgTable(
     ticketType: varchar('ticket_type', { length: 30 }).notNull(),
     parentId: uuid('parent_id'),
     sprintId: uuid('sprint_id').references(() => sprints.id, { onDelete: 'set null' }),
+    milestoneId: uuid('milestone_id').references(() => projectMilestones.id, { onDelete: 'set null' }),
     title: varchar('title', { length: 255 }).notNull(),
     description: text('description').default('').notNull(),
     status: varchar('status', { length: 50 }).default('TODO').notNull(),
@@ -177,7 +180,8 @@ export const tickets = pgTable(
     slaResolutionDueAt: timestamp('sla_resolution_due_at', { withTimezone: true }),
     isSlaPaused: boolean('is_sla_paused').default(false).notNull(),
 
-    // Dynamic JSONB Custom Fields
+    // Dynamic JSONB Custom Fields & Visibility
+    adminOnly: boolean('admin_only').default(false).notNull(),
     customFields: jsonb('custom_fields').default({}).notNull(),
 
     // Optimistic Concurrency & Lifecycle
@@ -510,8 +514,9 @@ export const teamMembersRelations = relations(teamMembers, ({ one }) => ({
   user: one(users, { fields: [teamMembers.userId], references: [users.id] }),
 }));
 
-export const projectMilestonesRelations = relations(projectMilestones, ({ one }) => ({
+export const projectMilestonesRelations = relations(projectMilestones, ({ one, many }) => ({
   project: one(projects, { fields: [projectMilestones.projectId], references: [projects.id] }),
+  tasks: many(tickets),
 }));
 
 export const projectActivityLogsRelations = relations(projectActivityLogs, ({ one }) => ({
@@ -550,6 +555,7 @@ export const ticketsRelations = relations(tickets, ({ one, many }) => ({
   assignee: one(users, { fields: [tickets.assigneeId], references: [users.id] }),
   assignedByUser: one(users, { fields: [tickets.assignedByUserId], references: [users.id] }),
   sprint: one(sprints, { fields: [tickets.sprintId], references: [sprints.id] }),
+  milestone: one(projectMilestones, { fields: [tickets.milestoneId], references: [projectMilestones.id] }),
   comments: many(ticketComments),
   outwardDependencies: many(ticketDependencies, { relationName: 'source_ticket' }),
   inwardDependencies: many(ticketDependencies, { relationName: 'target_ticket' }),

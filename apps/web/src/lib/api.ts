@@ -126,6 +126,7 @@ export interface Ticket {
   ticketType: 'INITIATIVE' | 'EPIC' | 'STORY' | 'TASK' | 'BUG' | 'SERVICE_REQUEST' | 'INCIDENT';
   parentId?: string | null;
   sprintId?: string | null;
+  milestoneId?: string | null;
   title: string;
   description: string;
   status: 'BACKLOG' | 'TODO' | 'IN_PROGRESS' | 'PENDING_APPROVAL' | 'IN_REVIEW' | 'RESOLVED' | 'DONE' | 'CANCELED';
@@ -146,6 +147,7 @@ export interface Ticket {
   slaResponseDueAt?: string | null;
   slaResolutionDueAt?: string | null;
   isSlaPaused?: boolean;
+  adminOnly?: boolean;
   customFields: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
@@ -181,6 +183,7 @@ export interface Project {
   projectManagerId?: string | null;
   reviewerId?: string | null;
   archived?: boolean;
+  adminVisibleTo?: string[];
   nextTicketNumber?: number;
   totalTicketsCount?: number;
   completedTicketsCount?: number;
@@ -228,6 +231,15 @@ export interface ProjectMilestone {
   description?: string | null;
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED';
   dueDate?: string | null;
+  tasks?: Array<{
+    id: string;
+    ticketKey: string;
+    title: string;
+    status: string;
+    priority: string;
+    assigneeId?: string | null;
+    assignee?: { id: string; fullName: string } | null;
+  }>;
   createdAt: string;
   updatedAt: string;
 }
@@ -398,6 +410,7 @@ export async function fetchTicket(ticketKey: string): Promise<Ticket> {
 export async function createTicket(data: {
   projectId: string;
   teamId?: string;
+  milestoneId?: string | null;
   title: string;
   description?: string;
   ticketType: Ticket['ticketType'];
@@ -406,6 +419,7 @@ export async function createTicket(data: {
   storyPoints?: number;
   assigneeId?: string;
   dueDate?: string;
+  adminOnly?: boolean;
 }): Promise<Ticket> {
   const res = await fetch(`${API_URL}/api/v1/tickets`, {
     method: 'POST',
@@ -1614,6 +1628,7 @@ export async function createProject(data: {
   githubLastSyncedAt?: string | null;
   projectManagerId?: string | null;
   reviewerId?: string | null;
+  adminVisibleTo?: string[];
 }): Promise<Project> {
   const res = await fetch(`${API_URL}/api/v1/projects`, {
     method: 'POST',
@@ -1640,6 +1655,7 @@ export async function updateProject(
     reviewerId?: string | null;
     primaryTeamId?: string;
     archived?: boolean;
+    adminVisibleTo?: string[];
   }
 ): Promise<Project> {
   const res = await fetch(`${API_URL}/api/v1/projects/${encodeURIComponent(key)}`, {
@@ -1689,6 +1705,7 @@ export async function createMilestone(
     description?: string;
     dueDate?: string | null;
     status?: string;
+    taskIds?: string[];
   }
 ): Promise<ProjectMilestone> {
   const res = await fetch(`${API_URL}/api/v1/projects/${encodeURIComponent(key)}/milestones`, {
@@ -1712,6 +1729,7 @@ export async function updateMilestone(
     description?: string;
     dueDate?: string | null;
     status?: string;
+    taskIds?: string[];
   }
 ): Promise<ProjectMilestone> {
   const res = await fetch(
