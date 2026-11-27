@@ -79,47 +79,102 @@ export function getMailProviders(): EmailProviderConfig[] {
 
   const providers: EmailProviderConfig[] = [];
 
-  // Provider 1: Resend
+  // Provider 1: Resend (HTTPS REST API — works on Render & cloud hosts where SMTP ports are blocked)
   if (
     (RESEND_API_KEY && !RESEND_API_KEY.includes('your_resend_api_key')) ||
     (SMTP_HOST && SMTP_HOST.includes('resend'))
   ) {
+    const resendKey = RESEND_API_KEY || SMTP_PASS;
+    const resendFrom = RESEND_FROM || SMTP_FROM || 'CoreTrack <onboarding@resend.dev>';
+    const resendHttpTransporter = {
+      sendMail: async (mailOpts: any) => {
+        const toList = Array.isArray(mailOpts.to) ? mailOpts.to : [mailOpts.to];
+        const response = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${resendKey}`,
+          },
+          body: JSON.stringify({
+            from: mailOpts.from || resendFrom,
+            to: toList,
+            subject: mailOpts.subject,
+            html: mailOpts.html,
+            text: mailOpts.text,
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const data = (await response.json().catch(() => ({}))) as any;
+        if (!response.ok) {
+          throw new Error(data.message || data.error || `Resend API HTTP ${response.status}`);
+        }
+        return { messageId: data.id };
+      },
+    } as unknown as Transporter;
+
     providers.push({
       name: 'RESEND',
       priority: 1,
-      from: RESEND_FROM || SMTP_FROM || 'CoreTrack <onboarding@resend.dev>',
-      transporter: nodemailer.createTransport({
-        host: 'smtp.resend.com',
-        port: 465,
-        secure: true,
-        auth: {
-          user: 'resend',
-          pass: RESEND_API_KEY || SMTP_PASS,
-        },
-      }),
+      from: resendFrom,
+      transporter: resendHttpTransporter,
     });
   }
 
-  // Provider 2: Mailjet
+  // Provider 2: Mailjet (HTTPS REST API v3.1 — works on Render & cloud hosts)
   if (
     (MAILJET_API_KEY &&
       MAILJET_SECRET_KEY &&
       !MAILJET_API_KEY.includes('your_mailjet_api_key')) ||
     (SMTP_HOST && SMTP_HOST.includes('mailjet'))
   ) {
+    const mjKey = MAILJET_API_KEY || SMTP_USER;
+    const mjSecret = MAILJET_SECRET_KEY || SMTP_PASS;
+    const mjFrom = MAILJET_FROM || SMTP_FROM;
+
+    const parseEmailAddress = (raw: string): { Email: string; Name?: string } => {
+      const match = raw.match(/^(?:"?([^"]*)"?\s*)?<([^>]+)>$/);
+      if (match) {
+        return { Email: match[2].trim(), Name: match[1]?.trim() || undefined };
+      }
+      return { Email: raw.trim() };
+    };
+
+    const mailjetHttpTransporter = {
+      sendMail: async (mailOpts: any) => {
+        const toRaw = Array.isArray(mailOpts.to) ? mailOpts.to : [mailOpts.to];
+        const authToken = Buffer.from(`${mjKey}:${mjSecret}`).toString('base64');
+        const response = await fetch('https://api.mailjet.com/v3.1/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Basic ${authToken}`,
+          },
+          body: JSON.stringify({
+            Messages: [
+              {
+                From: parseEmailAddress(mailOpts.from || mjFrom),
+                To: toRaw.map((t: string) => parseEmailAddress(t)),
+                Subject: mailOpts.subject,
+                HTMLPart: mailOpts.html,
+                TextPart: mailOpts.text,
+              },
+            ],
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const data = (await response.json().catch(() => ({}))) as any;
+        if (!response.ok) {
+          throw new Error(data.ErrorMessage || data.message || `Mailjet API HTTP ${response.status}`);
+        }
+        return { messageId: data.Messages?.[0]?.To?.[0]?.MessageID };
+      },
+    } as unknown as Transporter;
+
     providers.push({
       name: 'MAILJET',
       priority: providers.length + 1,
-      from: MAILJET_FROM || SMTP_FROM,
-      transporter: nodemailer.createTransport({
-        host: 'in-v3.mailjet.com',
-        port: 587,
-        secure: false,
-        auth: {
-          user: MAILJET_API_KEY || SMTP_USER,
-          pass: MAILJET_SECRET_KEY || SMTP_PASS,
-        },
-      }),
+      from: mjFrom,
+      transporter: mailjetHttpTransporter,
     });
   }
 

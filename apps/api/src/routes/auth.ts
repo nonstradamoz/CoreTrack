@@ -262,31 +262,29 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
-      // Optional welcome invitation email
+      // Optional welcome invitation email (non-blocking so user creation returns immediately)
       if (sendInviteEmail) {
-        try {
-          const roleDisplay = getRoleFromPermissions(globalPermissions).roleName;
-          const loginUrl = `${getAppUrl()}/login`;
-          await sendDirectOrBroadcastEmail({
-            recipient: { email: newUser.email, fullName: newUser.fullName },
-            subject: 'Welcome to CoreTrack Enterprise Workspace',
-            category: 'Welcome Onboarding',
-            categoryColor: '#2563eb',
-            headline: `Welcome to CoreTrack, ${newUser.fullName}!`,
-            greeting: `Hello ${newUser.fullName},`,
-            content: `Your new CoreTrack account has been successfully provisioned with the <strong>${roleDisplay}</strong> role.<br/><br/><strong>Login Credentials:</strong><br/>Email: <code>${escapeHtml(newUser.email)}</code><br/>Temporary Password: <code>${escapeHtml(password)}</code><br/><br/>You will be prompted to set a new personal password after your first sign-in.`,
-            sender: {
-              fullName: caller.fullName,
-              email: caller.email,
-              roleName: callerTierInfo.roleName,
-            },
-            ctaText: 'Sign In to Workspace',
-            ctaUrl: loginUrl,
-            notificationType: 'DIRECT_MAIL',
-          });
-        } catch (mailErr) {
+        const roleDisplay = getRoleFromPermissions(globalPermissions).roleName;
+        const loginUrl = `${getAppUrl()}/login`;
+        void sendDirectOrBroadcastEmail({
+          recipient: { email: newUser.email, fullName: newUser.fullName },
+          subject: 'Welcome to CoreTrack Enterprise Workspace',
+          category: 'Welcome Onboarding',
+          categoryColor: '#2563eb',
+          headline: `Welcome to CoreTrack, ${newUser.fullName}!`,
+          greeting: `Hello ${newUser.fullName},`,
+          content: `Your new CoreTrack account has been successfully provisioned with the <strong>${roleDisplay}</strong> role.<br/><br/><strong>Login Credentials:</strong><br/>Email: <code>${escapeHtml(newUser.email)}</code><br/>Temporary Password: <code>${escapeHtml(password)}</code><br/><br/>You will be prompted to set a new personal password after your first sign-in.`,
+          sender: {
+            fullName: caller.fullName,
+            email: caller.email,
+            roleName: callerTierInfo.roleName,
+          },
+          ctaText: 'Sign In to Workspace',
+          ctaUrl: loginUrl,
+          notificationType: 'DIRECT_MAIL',
+        }).catch((mailErr) => {
           console.warn('Failed to send invitation email:', mailErr);
-        }
+        });
       }
 
       const roleInfo = getRoleFromPermissions(newUser.globalPermissions);
