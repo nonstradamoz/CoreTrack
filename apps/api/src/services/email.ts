@@ -318,6 +318,8 @@ export async function sendEmailNotification(options: EmailDispatchOptions): Prom
         recipientEmail: to,
         recipientName: toName,
         subject,
+        htmlBody: html,
+        textBody: text || subject,
         notificationType,
         ticketId,
         projectId,

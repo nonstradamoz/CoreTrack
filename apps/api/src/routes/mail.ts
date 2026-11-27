@@ -490,15 +490,39 @@ export const mailRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(404).send({ error: 'Mail log not found' });
       }
 
-      const res = await sendEmailNotification({
-        to: log.recipientEmail,
-        toName: log.recipientName || undefined,
-        subject: log.subject,
-        html: `<p>Re-transmitted message:</p><p>${log.subject}</p>`,
-        notificationType: log.notificationType,
-        projectId: log.projectId || undefined,
-        ticketId: log.ticketId || undefined,
-      });
+      const res = log.htmlBody
+        ? await sendEmailNotification({
+            to: log.recipientEmail,
+            toName: log.recipientName || undefined,
+            subject: log.subject,
+            html: log.htmlBody,
+            text: log.textBody || log.subject,
+            notificationType: log.notificationType,
+            projectId: log.projectId || undefined,
+            ticketId: log.ticketId || undefined,
+          })
+        : await sendDirectOrBroadcastEmail({
+            recipient: {
+              email: log.recipientEmail,
+              fullName: log.recipientName || log.recipientEmail,
+            },
+            subject: log.subject,
+            category: log.notificationType.replace(/_/g, ' '),
+            categoryColor: '#2563eb',
+            headline: log.subject,
+            greeting: `Hello ${log.recipientName || 'there'},`,
+            content: `This is a re-sent notification from CoreTrack regarding: <strong>${log.subject}</strong>.<br/><br/>Please sign in to your CoreTrack workspace to view the full details.`,
+            sender: {
+              fullName: auth.user.fullName,
+              email: auth.user.email,
+              roleName: auth.tierInfo.roleName,
+            },
+            ctaText: 'Open CoreTrack Workspace',
+            ctaUrl: `${getAppUrl()}/login`,
+            notificationType: log.notificationType,
+            projectId: log.projectId || undefined,
+            ticketId: log.ticketId || undefined,
+          });
 
       return reply.send({
         data: {

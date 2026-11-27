@@ -669,18 +669,25 @@ function EditProjectModal({
               <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                 Project Manager
               </label>
-              <select
-                value={projectManagerId}
-                onChange={(e) => setProjectManagerId(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
-              >
-                <option value="">-- No Manager --</option>
-                {availableUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.fullName}
-                  </option>
-                ))}
-              </select>
+              {(() => {
+                const managerUsers = availableUsers.filter(
+                  (u) => u.roleTier === 3 || (u.roleName || '').toLowerCase() === 'manager'
+                );
+                return (
+                  <select
+                    value={projectManagerId}
+                    onChange={(e) => setProjectManagerId(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-slate-100"
+                  >
+                    <option value="">-- No Manager --</option>
+                    {managerUsers.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.fullName}
+                      </option>
+                    ))}
+                  </select>
+                );
+              })()}
             </div>
 
             <div>

@@ -40,6 +40,12 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
     return status;
   }
 
+  // Helper to verify that a user holds the Manager role (Tier 3 / Manager)
+  async function isUserProjectManager(userId: string): Promise<boolean> {
+    const tierInfo = await getUserRoleTier(userId);
+    return tierInfo.tier === 3 || tierInfo.roleName.toLowerCase() === 'manager';
+  }
+
   // 1. Project Dashboard Metrics (Placed BEFORE /:key so it is not intercepted)
   app.get(
     '/dashboard/metrics',
@@ -561,6 +567,12 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(400).send({ error: `Project with key '${key}' already exists` });
       }
 
+      if (projectManagerId && !(await isUserProjectManager(projectManagerId))) {
+        return reply.status(400).send({
+          error: 'Only users with the Manager role can be assigned as Project Manager.',
+        });
+      }
+
       // Safe foreign key validation for departmentId
       let resolvedDeptId: string | null = null;
       if (departmentId) {
@@ -797,6 +809,11 @@ export const projectRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (updates.projectManagerId !== undefined) {
         if (updates.projectManagerId) {
+          if (!(await isUserProjectManager(updates.projectManagerId))) {
+            return reply.status(400).send({
+              error: 'Only users with the Manager role can be assigned as Project Manager.',
+            });
+          }
           const pmExists = await db.query.users.findFirst({ where: eq(users.id, updates.projectManagerId) });
           updateData.projectManagerId = pmExists ? pmExists.id : null;
         } else {

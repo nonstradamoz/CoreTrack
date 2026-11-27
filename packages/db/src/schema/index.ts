@@ -356,6 +356,8 @@ export const emailNotificationLogs = pgTable(
     recipientEmail: varchar('recipient_email', { length: 255 }).notNull(),
     recipientName: varchar('recipient_name', { length: 150 }),
     subject: varchar('subject', { length: 255 }).notNull(),
+    htmlBody: text('html_body'),
+    textBody: text('text_body'),
     notificationType: varchar('notification_type', { length: 50 }).notNull(), // TASK_ASSIGNED, PROJECT_ASSIGNED, TASK_OVERDUE, PROJECT_OVERDUE, SPRINT_PROMOTED
     ticketId: uuid('ticket_id').references(() => tickets.id, { onDelete: 'set null' }),
     projectId: uuid('project_id').references(() => projects.id, { onDelete: 'set null' }),
